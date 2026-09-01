@@ -24,9 +24,12 @@ public partial class ActionBarWindow : Window
             {
                 Content = folder.Name,
                 Tag = folder,
-                Height = 40,
+                Height = 36,
                 MinWidth = 84,
                 Padding = new Thickness(9, 0, 9, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalContentAlignment = System.Windows.HorizontalAlignment.Center,
+                VerticalContentAlignment = System.Windows.VerticalAlignment.Center,
                 ToolTip = "打开收藏夹"
             };
             button.AllowDrop = true;
@@ -51,8 +54,11 @@ public partial class ActionBarWindow : Window
         {
             Content = "+",
             Width = 34,
-            Height = 40,
+            Height = 36,
             Padding = new Thickness(0),
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalContentAlignment = System.Windows.HorizontalAlignment.Center,
+            VerticalContentAlignment = System.Windows.VerticalAlignment.Center,
             ToolTip = "新建收藏夹"
         };
         addButton.Click += NewFolder_Click;

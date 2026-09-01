@@ -453,31 +453,36 @@ public partial class MainWindow : Window
         {
             Width = 250,
             Height = 54,
-            Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(245, 255, 255, 255)),
-            BorderBrush = (System.Windows.Media.Brush)FindResource("AccentBrush"),
+            Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(232, 255, 255, 255)),
+            BorderBrush = TryFindResource("AccentBrush") as System.Windows.Media.Brush ?? System.Windows.Media.Brushes.DeepSkyBlue,
             BorderThickness = new Thickness(1.5),
             CornerRadius = new CornerRadius(8),
             Padding = new Thickness(12, 0, 12, 0),
-            Opacity = 0.92,
+            Opacity = 0.86,
             Child = new TextBlock
             {
                 Text = previewText,
-                Foreground = (System.Windows.Media.Brush)FindResource("InkBrush"),
+                Foreground = TryFindResource("InkBrush") as System.Windows.Media.Brush ?? System.Windows.Media.Brushes.Black,
                 FontSize = 13,
                 TextTrimming = TextTrimming.CharacterEllipsis,
-                VerticalAlignment = VerticalAlignment.Center
+                HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch,
+                VerticalAlignment = System.Windows.VerticalAlignment.Center,
+                TextAlignment = TextAlignment.Left
             }
         };
         _dragPreviewPopup = new System.Windows.Controls.Primitives.Popup
         {
             AllowsTransparency = true,
-            StaysOpen = false,
+            // Keep the preview alive while the native drag loop moves across
+            // different controls. It is explicitly closed in the drag finally
+            // block, so it cannot leak after a cancelled drop.
+            StaysOpen = true,
             IsHitTestVisible = false,
             Placement = System.Windows.Controls.Primitives.PlacementMode.AbsolutePoint,
             Child = content
         };
-        UpdateDragPreview();
         _dragPreviewPopup.IsOpen = true;
+        UpdateDragPreview();
     }
 
     private void UpdateDragPreview()
@@ -582,14 +587,14 @@ public partial class MainWindow : Window
         if (card is null || ReferenceEquals(_dragHighlight, card)) return;
         ClearDragHighlight();
         _dragHighlight = card;
-        card.BorderBrush = (System.Windows.Media.Brush)FindResource("AccentBrush");
+        card.BorderBrush = TryFindResource("AccentBrush") as System.Windows.Media.Brush ?? System.Windows.Media.Brushes.DeepSkyBlue;
         card.BorderThickness = new Thickness(2);
     }
 
     private void ClearDragHighlight()
     {
         if (_dragHighlight is null) return;
-        _dragHighlight.BorderBrush = (System.Windows.Media.Brush)FindResource("OutlineBrush");
+        _dragHighlight.BorderBrush = TryFindResource("OutlineBrush") as System.Windows.Media.Brush ?? System.Windows.Media.Brushes.LightGray;
         _dragHighlight.BorderThickness = new Thickness(1);
         _dragHighlight = null;
     }

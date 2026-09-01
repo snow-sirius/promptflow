@@ -25,12 +25,24 @@
             </Border>
         </DataTemplate>
         <DataTemplate x:Key="FolderTemplate" DataType="{x:Type models:Folder}">
-            <Border Height="52" HorizontalAlignment="Stretch" Padding="9,7" Margin="0,2" Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource OutlineBrush}" BorderThickness="1" CornerRadius="7"
+            <Border Height="52" HorizontalAlignment="Stretch" Padding="9,7" Margin="0,2" BorderThickness="1" CornerRadius="7"
                     MouseLeftButtonUp="Folder_MouseLeftButtonUp" AllowDrop="True" DragOver="FolderCard_DragOver" DragLeave="FolderCard_DragLeave" Drop="FolderCard_Drop">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Background" Value="{StaticResource SurfaceBrush}"/>
+                        <Setter Property="BorderBrush" Value="{StaticResource OutlineBrush}"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding RelativeSource={RelativeSource AncestorType=ListBoxItem}, Path=IsSelected}" Value="True">
+                                <Setter Property="Background" Value="#E3F1F3"/>
+                                <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
                 <Grid>
                     <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                    <TextBlock Text="{Binding Name}" Foreground="{StaticResource InkBrush}" TextTrimming="CharacterEllipsis"/>
-                    <StackPanel Grid.Column="1" Orientation="Horizontal"><TextBlock Text="{Binding ItemCount}" Foreground="{StaticResource MutedBrush}" Margin="8,0"/><TextBlock Text="{Binding IsLocked, Converter={StaticResource BoolToLockConverter}}"/></StackPanel>
+                    <TextBlock Text="{Binding Name}" Foreground="{StaticResource InkBrush}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center"><TextBlock Text="{Binding ItemCount}" Foreground="{StaticResource MutedBrush}" Margin="8,0" VerticalAlignment="Center"/><TextBlock Text="{Binding IsLocked, Converter={StaticResource BoolToLockConverter}}" VerticalAlignment="Center"/></StackPanel>
                 </Grid>
             </Border>
         </DataTemplate>
@@ -43,7 +55,7 @@
                          ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.CanContentScroll="False"
                          HorizontalContentAlignment="Stretch" AllowDrop="True" Drop="ItemList_Drop" DragOver="ItemList_DragOver" PreviewMouseWheel="List_PreviewMouseWheel">
                     <ListBox.ItemContainerStyle>
-                        <Style TargetType="ListBoxItem">
+                        <Style TargetType="ListBoxItem" BasedOn="{StaticResource PromptFlowListBoxItem}">
                             <Setter Property="Height" Value="68"/>
                             <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
                             <Setter Property="Padding" Value="0"/>
@@ -58,7 +70,7 @@
                          Background="Transparent" BorderThickness="0" AllowDrop="True" Drop="FolderList_Drop" ScrollViewer.VerticalScrollBarVisibility="Auto"
                          ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.CanContentScroll="False" HorizontalContentAlignment="Stretch" DragOver="FolderList_DragOver" PreviewMouseWheel="List_PreviewMouseWheel">
                     <ListBox.ItemContainerStyle>
-                        <Style TargetType="ListBoxItem">
+                        <Style TargetType="ListBoxItem" BasedOn="{StaticResource PromptFlowListBoxItem}">
                             <Setter Property="Height" Value="56"/>
                             <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
                             <Setter Property="Padding" Value="0"/>
@@ -71,7 +83,7 @@
                          AllowDrop="True" Drop="FavoriteItemList_Drop" ScrollViewer.VerticalScrollBarVisibility="Auto"
                          ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.CanContentScroll="False" HorizontalContentAlignment="Stretch" DragOver="FavoriteItemList_DragOver" PreviewMouseWheel="List_PreviewMouseWheel">
                     <ListBox.ItemContainerStyle>
-                        <Style TargetType="ListBoxItem">
+                        <Style TargetType="ListBoxItem" BasedOn="{StaticResource PromptFlowListBoxItem}">
                             <Setter Property="Height" Value="68"/>
                             <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
                             <Setter Property="Padding" Value="0"/>

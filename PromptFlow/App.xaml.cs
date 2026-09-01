@@ -1,5 +1,6 @@
 using System.Threading;
 using System.Windows;
+using System.IO;
 
 namespace PromptFlow;
 
@@ -11,7 +12,12 @@ public partial class App : System.Windows.Application
         DispatcherUnhandledException += (_, args) =>
         {
             args.Handled = true;
-            try { System.Windows.MessageBox.Show($"操作失败，程序仍在运行。\n{args.Exception.Message}", "PromptFlow", MessageBoxButton.OK, MessageBoxImage.Error); }
+            try
+            {
+                var logPath = Path.Combine(Path.GetTempPath(), "promptflow-error.log");
+                File.AppendAllText(logPath, $"[{DateTime.Now:O}]\n{args.Exception}\n\n");
+                System.Windows.MessageBox.Show($"操作失败，程序仍在运行。\n{args.Exception.Message}", "PromptFlow", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
             catch { }
         };
         _mutex = new Mutex(true, "PromptFlow.SingleInstance", out var created);
