@@ -8,29 +8,36 @@
     <Application.Resources>
         <ResourceDictionary>
         <ResourceDictionary.MergedDictionaries>
-            <materialDesign:BundledTheme BaseTheme="Light" PrimaryColor="Indigo" SecondaryColor="DeepOrange" />
+            <materialDesign:BundledTheme BaseTheme="Light" PrimaryColor="BlueGrey" SecondaryColor="Teal" />
             <ResourceDictionary Source="pack://application:,,,/MaterialDesignThemes.Wpf;component/Themes/MaterialDesign3.Defaults.xaml" />
         </ResourceDictionary.MergedDictionaries>
         <converters:BoolToLockConverter x:Key="BoolToLockConverter" />
         <converters:BoolToStarConverter x:Key="BoolToStarConverter" />
-        <Color x:Key="Ink">#172033</Color>
-        <Color x:Key="Muted">#667085</Color>
-        <Color x:Key="Accent">#5B5CE2</Color>
+        <Color x:Key="Ink">#202938</Color>
+        <Color x:Key="Muted">#728096</Color>
+        <Color x:Key="Accent">#0E7490</Color>
+        <Color x:Key="Surface">#FFFFFF</Color>
+        <Color x:Key="SurfaceSubtle">#F6F8FB</Color>
+        <Color x:Key="Outline">#DDE3EC</Color>
         <SolidColorBrush x:Key="InkBrush" Color="{StaticResource Ink}" />
         <SolidColorBrush x:Key="MutedBrush" Color="{StaticResource Muted}" />
         <SolidColorBrush x:Key="AccentBrush" Color="{StaticResource Accent}" />
+        <SolidColorBrush x:Key="SurfaceBrush" Color="{StaticResource Surface}" />
+        <SolidColorBrush x:Key="SurfaceSubtleBrush" Color="{StaticResource SurfaceSubtle}" />
+        <SolidColorBrush x:Key="OutlineBrush" Color="{StaticResource Outline}" />
         <Style TargetType="Button">
-            <Setter Property="Margin" Value="3"/>
-            <Setter Property="Padding" Value="12,7"/>
+            <Setter Property="Margin" Value="2"/>
+            <Setter Property="Padding" Value="10,6"/>
             <Setter Property="FontSize" Value="13"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="BorderBrush" Value="Transparent"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Foreground" Value="{StaticResource InkBrush}"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
         </Style>
-        <Style TargetType="ListBoxItem"><Setter Property="Padding" Value="0"/><Setter Property="Margin" Value="0,3"/><Setter Property="HorizontalContentAlignment" Value="Stretch"/></Style>
-        <Style TargetType="TextBox"><Setter Property="Padding" Value="10,7"/><Setter Property="BorderBrush" Value="#E1E4EF"/><Setter Property="BorderThickness" Value="1"/></Style>
+        <Style TargetType="ListBoxItem"><Setter Property="Padding" Value="0"/><Setter Property="Margin" Value="0,2"/><Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="FocusVisualStyle" Value="{x:Null}"/></Style>
+        <Style TargetType="TextBox"><Setter Property="Padding" Value="10,7"/><Setter Property="BorderBrush" Value="{StaticResource OutlineBrush}"/><Setter Property="BorderThickness" Value="1"/><Setter Property="Background" Value="White"/></Style>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

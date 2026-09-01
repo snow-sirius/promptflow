@@ -4,12 +4,11 @@
         WindowStyle="None" AllowsTransparency="True" Background="Transparent"
         Width="360" Height="52" ResizeMode="NoResize" ShowInTaskbar="False" Topmost="True" ShowActivated="False"
         Deactivated="Window_Deactivated">
-    <Border Background="White" BorderBrush="#D9DDE8" BorderThickness="1" CornerRadius="12" Padding="5">
+    <Border Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource OutlineBrush}" BorderThickness="1" CornerRadius="12" Padding="5">
         <DockPanel LastChildFill="True">
             <Button Content="历史" Click="History_Click" Width="54" Height="40" ToolTip="历史"/>
             <Button Content="收藏" Click="Favorites_Click" Width="54" Height="40" ToolTip="收藏夹"/>
             <Button Content="＋" Click="NewFolder_Click" Width="34" Height="40" Padding="0" ToolTip="新建收藏夹"/>
-            <Button Content="⚙" Click="Settings_Click" Width="34" Height="40" Padding="0" ToolTip="设置"/>
             <Button Content="×" Click="Close_Click" Width="34" Height="40" Padding="0" ToolTip="关闭" DockPanel.Dock="Right"/>
             <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" Margin="3,0">
                 <StackPanel x:Name="RecentFoldersPanel" Orientation="Horizontal" VerticalAlignment="Center"/>

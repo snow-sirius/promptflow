@@ -34,6 +34,7 @@ public partial class MainWindow : Window
     private WpfPoint _dragStart;
     private IntPtr _targetWindow;
     private IntPtr _targetFocusWindow;
+    private long _draggedFolder;
 
     public MainWindow()
     {
@@ -245,10 +246,22 @@ public partial class MainWindow : Window
     private void FolderList_Drop(object sender, System.Windows.DragEventArgs e)
     {
         var target = FindParent<ListBoxItem>(e.OriginalSource as DependencyObject)?.DataContext as Folder;
-        if (e.Data.GetData(typeof(ClipboardItem)) is ClipboardItem item && target is not null) { _repository.AddToFolder(item.Id, target.Id); RefreshItems(); return; }
+        if (e.Data.GetData(typeof(ClipboardItem)) is ClipboardItem item && target is not null)
+        {
+            if (_draggedFolder > 0 && _draggedFolder != target.Id) _repository.RemoveFromFolder(item.Id, _draggedFolder);
+            _repository.AddToFolder(item.Id, target.Id);
+            RefreshItems();
+            return;
+        }
         if (e.Data.GetData(typeof(Folder)) is Folder source && target is not null && source.Id != target.Id)
         {
-            var ordered = _folders.Select(f => f.Id).ToList(); ordered.Remove(source.Id); ordered.Insert(Math.Max(0, ordered.IndexOf(target.Id)), source.Id); _repository.ReorderFolders(ordered); RefreshItems();
+            var ordered = _folders.Select(f => f.Id).ToList();
+            var targetIndex = ordered.IndexOf(target.Id);
+            var sourceIndex = ordered.IndexOf(source.Id);
+            ordered.Remove(source.Id);
+            if (sourceIndex < targetIndex) targetIndex--;
+            ordered.Insert(Math.Clamp(targetIndex, 0, ordered.Count), source.Id);
+            _repository.ReorderFolders(ordered); RefreshItems();
         }
     }
     private void ItemList_Drop(object sender, System.Windows.DragEventArgs e)
@@ -256,19 +269,48 @@ public partial class MainWindow : Window
         if (e.Data.GetData(typeof(ClipboardItem)) is not ClipboardItem item) return;
         if (_selectedFolder > 0 && FindParent<ListBoxItem>(e.OriginalSource as DependencyObject)?.DataContext is ClipboardItem target && target.Id != item.Id)
         {
-            var ordered = _items.Select(x => x.Id).ToList(); ordered.Remove(item.Id); ordered.Insert(Math.Max(0, ordered.IndexOf(target.Id)), item.Id); _repository.ReorderFolderItems(_selectedFolder, ordered); RefreshItems(); return;
+            var ordered = _items.Select(x => x.Id).ToList();
+            var targetIndex = ordered.IndexOf(target.Id);
+            var sourceIndex = ordered.IndexOf(item.Id);
+            ordered.Remove(item.Id);
+            if (sourceIndex < targetIndex) targetIndex--;
+            ordered.Insert(Math.Clamp(targetIndex, 0, ordered.Count), item.Id);
+            _repository.ReorderFolderItems(_selectedFolder, ordered); RefreshItems(); return;
         }
-        PasteToTarget(item, Keyboard.Modifiers.HasFlag(ModifierKeys.Control));
+    }
+    private void FavoriteItemList_Drop(object sender, System.Windows.DragEventArgs e)
+    {
+        if (e.Data.GetData(typeof(ClipboardItem)) is not ClipboardItem item || _selectedFolder <= 0) return;
+        if (FindParent<ListBoxItem>(e.OriginalSource as DependencyObject)?.DataContext is ClipboardItem target && target.Id != item.Id)
+        {
+            var ordered = _favoriteItems.Select(x => x.Id).ToList();
+            var targetIndex = ordered.IndexOf(target.Id);
+            var sourceIndex = ordered.IndexOf(item.Id);
+            ordered.Remove(item.Id);
+            if (sourceIndex < targetIndex) targetIndex--;
+            ordered.Insert(Math.Clamp(targetIndex, 0, ordered.Count), item.Id);
+            _repository.ReorderFolderItems(_selectedFolder, ordered); RefreshItems();
+        }
     }
     private void ItemList_PreviewMouseMove(object sender, System.Windows.Input.MouseEventArgs e)
     {
         if (e.LeftButton != MouseButtonState.Pressed || (e.GetPosition(ItemList) - _dragStart).Length < 8) return;
-        if (FindParent<ListBoxItem>(e.OriginalSource as DependencyObject)?.DataContext is ClipboardItem item) DragDrop.DoDragDrop(ItemList, item, System.Windows.DragDropEffects.Copy | System.Windows.DragDropEffects.Move);
+        if (FindParent<ListBoxItem>(e.OriginalSource as DependencyObject)?.DataContext is ClipboardItem item)
+        {
+            _draggedFolder = _directFolderMode ? _selectedFolder : 0;
+            DragDrop.DoDragDrop(ItemList, item, System.Windows.DragDropEffects.Move);
+            _draggedFolder = 0;
+        }
     }
     private void FavoriteItemList_PreviewMouseMove(object sender, System.Windows.Input.MouseEventArgs e)
     {
         if (e.LeftButton != MouseButtonState.Pressed || (e.GetPosition(FavoriteItemList) - _dragStart).Length < 8) return;
-        if (FindParent<ListBoxItem>(e.OriginalSource as DependencyObject)?.DataContext is ClipboardItem item) DragDrop.DoDragDrop(FavoriteItemList, item, System.Windows.DragDropEffects.Copy | System.Windows.DragDropEffects.Move);
+        if (FindParent<ListBoxItem>(e.OriginalSource as DependencyObject)?.DataContext is ClipboardItem item)
+        {
+            _draggedFolder = _selectedFolder;
+            DragDrop.DoDragDrop(FavoriteItemList, item, System.Windows.DragDropEffects.Move);
+            _draggedFolder = 0;
+        }
     }
     private void FolderList_PreviewMouseMove(object sender, System.Windows.Input.MouseEventArgs e)
     {

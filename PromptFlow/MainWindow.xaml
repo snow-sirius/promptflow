@@ -8,7 +8,7 @@
         Loaded="Window_Loaded" Deactivated="Window_Deactivated">
     <Window.Resources>
         <DataTemplate x:Key="ItemTemplate" DataType="{x:Type models:ClipboardItem}">
-            <Border Height="62" HorizontalAlignment="Stretch" Margin="0,2" Padding="10,7" Background="White" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="8"
+            <Border Height="62" HorizontalAlignment="Stretch" Margin="0,2" Padding="10,7" Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource OutlineBrush}" BorderThickness="1" CornerRadius="8"
                     MouseEnter="Item_MouseEnter" MouseLeave="Item_MouseLeave" MouseLeftButtonUp="Item_MouseLeftButtonUp">
                 <Grid>
                     <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
@@ -16,7 +16,7 @@
                         <TextBlock Text="{Binding Preview}" FontSize="13" Foreground="{StaticResource InkBrush}" TextTrimming="CharacterEllipsis" MaxHeight="34"/>
                         <TextBlock Text="{Binding LastCopiedAt, StringFormat={}{0:MM-dd HH:mm}}" FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="0,5,0,0"/>
                     </StackPanel>
-                    <Button Grid.Column="1" Tag="{Binding}" Content="{Binding IsFavorite, Converter={StaticResource BoolToStarConverter}}" Click="Favorite_Click" Width="30" Height="28" Padding="0" ToolTip="收藏到收藏夹"/>
+                    <Button Grid.Column="1" Tag="{Binding}" Content="{Binding IsFavorite, Converter={StaticResource BoolToStarConverter}}" Click="Favorite_Click" Width="30" Height="28" Padding="0" ToolTip="收藏到收藏夹" Foreground="{StaticResource AccentBrush}" FontSize="16"/>
                     <Border x:Name="PreviewBorder" Visibility="Collapsed" Grid.ColumnSpan="2" Background="#202938" CornerRadius="6" Padding="10" Margin="0,48,42,0" Panel.ZIndex="3">
                         <TextBlock Text="{Binding TextContent}" Foreground="White" TextWrapping="Wrap" MaxHeight="110"/>
                     </Border>
@@ -24,7 +24,7 @@
             </Border>
         </DataTemplate>
         <DataTemplate x:Key="FolderTemplate" DataType="{x:Type models:Folder}">
-            <Border Height="52" HorizontalAlignment="Stretch" Padding="9,7" Margin="0,2" Background="White" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="7">
+            <Border Height="52" HorizontalAlignment="Stretch" Padding="9,7" Margin="0,2" Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource OutlineBrush}" BorderThickness="1" CornerRadius="7">
                 <Grid>
                     <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                     <TextBlock Text="{Binding Name}" Foreground="{StaticResource InkBrush}" TextTrimming="CharacterEllipsis"/>
@@ -33,7 +33,7 @@
             </Border>
         </DataTemplate>
     </Window.Resources>
-    <Border Background="#F8F9FC" BorderBrush="#D9DDE8" BorderThickness="1" CornerRadius="12" Padding="10">
+    <Border Background="{StaticResource SurfaceSubtleBrush}" BorderBrush="{StaticResource OutlineBrush}" BorderThickness="1" CornerRadius="12" Padding="10">
         <Grid>
             <Grid.RowDefinitions><RowDefinition/><RowDefinition Height="22"/></Grid.RowDefinitions>
             <Grid x:Name="HistoryContent">
@@ -64,9 +64,9 @@
                         </Style>
                     </ListBox.ItemContainerStyle>
                 </ListBox>
-                <Border Grid.Column="1" Background="#E5E7EB" Width="1" HorizontalAlignment="Center"/>
+                <Border Grid.Column="1" Background="{StaticResource OutlineBrush}" Width="1" HorizontalAlignment="Center"/>
                 <ListBox x:Name="FavoriteItemList" Grid.Column="2" ItemsSource="{Binding}" ItemTemplate="{StaticResource ItemTemplate}" Background="Transparent" BorderThickness="0"
-                         AllowDrop="True" Drop="ItemList_Drop" ScrollViewer.VerticalScrollBarVisibility="Auto"
+                         AllowDrop="True" Drop="FavoriteItemList_Drop" ScrollViewer.VerticalScrollBarVisibility="Auto"
                          ScrollViewer.HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
                     <ListBox.ItemContainerStyle>
                         <Style TargetType="ListBoxItem">
