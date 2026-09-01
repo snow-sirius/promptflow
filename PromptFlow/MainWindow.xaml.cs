@@ -35,6 +35,9 @@ public partial class MainWindow : Window
     private IntPtr _targetWindow;
     private IntPtr _targetFocusWindow;
     private long _draggedFolder;
+    private bool _suppressNextItemClick;
+    private IntPtr _outsideMouseHook;
+    private LowLevelMouseProc? _outsideMouseProc;
 
     public MainWindow()
     {
@@ -57,6 +60,8 @@ public partial class MainWindow : Window
     private void InitializeNativeServices()
     {
         ConfigureAsNonActivatingWindow(this);
+        _outsideMouseProc = OutsideMouseCallback;
+        _outsideMouseHook = SetWindowsHookEx(WhMouseLl, _outsideMouseProc, GetModuleHandle(null), 0);
         StartMonitor();
         _hotkey = new NativeHotkeyService(this); _hotkey.Triggered += (_, _) => Dispatcher.Invoke(TogglePopup); _hotkey.RegistrationFailed += (_, text) => StatusText.Text = text; _hotkey.Register(_settings.Current.Hotkey);
         _tray = new TrayService { MonitorEnabled = _settings.Current.MonitorEnabled }; _tray.OpenRequested += (_, _) => ShowPopup(); _tray.SettingsRequested += (_, _) => ShowSettings(); _tray.ToggleMonitorRequested += (_, _) => ToggleMonitor(); _tray.ExitRequested += (_, _) => System.Windows.Application.Current.Shutdown();
@@ -299,6 +304,7 @@ public partial class MainWindow : Window
         {
             _draggedFolder = _directFolderMode ? _selectedFolder : 0;
             DragDrop.DoDragDrop(ItemList, item, System.Windows.DragDropEffects.Move);
+            _suppressNextItemClick = true;
             _draggedFolder = 0;
         }
     }
@@ -309,6 +315,7 @@ public partial class MainWindow : Window
         {
             _draggedFolder = _selectedFolder;
             DragDrop.DoDragDrop(FavoriteItemList, item, System.Windows.DragDropEffects.Move);
+            _suppressNextItemClick = true;
             _draggedFolder = 0;
         }
     }
@@ -321,6 +328,7 @@ public partial class MainWindow : Window
     private void Item_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e) { if (sender is Border b && b.Child is Grid grid && grid.Children.OfType<Border>().FirstOrDefault() is Border preview) preview.Visibility=Visibility.Collapsed; }
     private void Item_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
+        if (_suppressNextItemClick) { _suppressNextItemClick = false; e.Handled = true; return; }
         if (FindParent<WpfButton>(e.OriginalSource as DependencyObject) is not null) return;
         if (FindParent<ListBoxItem>(e.OriginalSource as DependencyObject)?.DataContext is ClipboardItem item)
         {
@@ -391,11 +399,21 @@ public partial class MainWindow : Window
     private void LoadSettingsFields() { }
     private void ToggleMonitor() => ApplySettings(_settings.Current with { MonitorEnabled = !_settings.Current.MonitorEnabled }, _repository.GetExclusions());
     public void ClearHistoryFromSettings() { _repository.ClearHistory(); RefreshItems(); }
-    protected override void OnClosed(EventArgs e){_actionBar.Close();_monitor?.Dispose();_hotkey?.Dispose();_tray?.Dispose();_repository.Dispose();base.OnClosed(e);}
+    protected override void OnClosed(EventArgs e){if(_outsideMouseHook!=IntPtr.Zero)UnhookWindowsHookEx(_outsideMouseHook);_actionBar.Close();_monitor?.Dispose();_hotkey?.Dispose();_tray?.Dispose();_repository.Dispose();base.OnClosed(e);}
 
     internal void SelectHistoryFromBar() => History_Click(this, new RoutedEventArgs());
     internal void SelectFavoritesFromBar() => Favorites_Click(this, new RoutedEventArgs());
     internal void SelectRecentFromBar(Folder folder) { _selectedFolder = folder.Id; _repository.MarkFolderUsed(folder.Id); _favoritesMode = false; _directFolderMode = true; RefreshItems(); }
+    internal void MoveItemToFolder(ClipboardItem item, long folderId)
+    {
+        try
+        {
+            if (_draggedFolder > 0 && _draggedFolder != folderId) _repository.RemoveFromFolder(item.Id, _draggedFolder);
+            _repository.AddToFolder(item.Id, folderId);
+            RefreshItems();
+        }
+        catch (Exception ex) { ShowOperationError("移动词条失败", ex); }
+    }
     internal void CreateFolderFromBar() => NewFolder_Click(this, new RoutedEventArgs());
     internal void ShowSettingsFromBar() => ShowSettings();
     internal void CloseFromBar() => HideMenus();
@@ -424,6 +442,19 @@ public partial class MainWindow : Window
             return new IntPtr(MaNoActivate);
         }
         return IntPtr.Zero;
+    }
+
+    private IntPtr OutsideMouseCallback(int code, IntPtr wParam, IntPtr lParam)
+    {
+        if (code >= 0 && (wParam.ToInt32() == WmLButtonDown || wParam.ToInt32() == WmRButtonDown || wParam.ToInt32() == WmMButtonDown) && (IsVisible || _actionBar.IsVisible) && !_contextMenuOpen)
+        {
+            var point = Marshal.PtrToStructure<MouseHookStruct>(lParam).Point;
+            var root = GetAncestor(WindowFromPoint(point), GaRoot);
+            var own = new WindowInteropHelper(this).Handle;
+            var bar = new WindowInteropHelper(_actionBar).Handle;
+            if (root != own && root != bar) Dispatcher.BeginInvoke(HideMenus, DispatcherPriority.Input);
+        }
+        return CallNextHookEx(_outsideMouseHook, code, wParam, lParam);
     }
 
     private static bool FocusTargetWindow(IntPtr target, IntPtr targetFocus)
@@ -495,6 +526,12 @@ public partial class MainWindow : Window
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] private static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int index);
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] private static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int index, IntPtr value);
     [DllImport("user32.dll")] private static extern bool SetWindowPos(IntPtr hWnd, IntPtr insertAfter, int x, int y, int cx, int cy, uint flags);
+    [DllImport("user32.dll", SetLastError = true)] private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelMouseProc proc, IntPtr module, uint threadId);
+    [DllImport("user32.dll")] private static extern bool UnhookWindowsHookEx(IntPtr hook);
+    [DllImport("user32.dll")] private static extern IntPtr CallNextHookEx(IntPtr hook, int code, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")] private static extern IntPtr WindowFromPoint(Point point);
+    [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
+    [DllImport("kernel32.dll")] private static extern IntPtr GetModuleHandle(string? name);
     [DllImport("user32.dll", SetLastError = true)] private static extern uint SendInput(uint count, [MarshalAs(UnmanagedType.LPArray), In] Input[] inputs, int size);
 
     [StructLayout(LayoutKind.Explicit, Size = 40)] private struct Input
@@ -513,6 +550,11 @@ public partial class MainWindow : Window
         public Rect RcCaret;
     }
     [StructLayout(LayoutKind.Sequential)] private struct Rect { public int Left, Top, Right, Bottom; }
+    [StructLayout(LayoutKind.Sequential)] private struct Point { public int X, Y; }
+    [StructLayout(LayoutKind.Sequential)] private struct MouseHookStruct { public Point Point; public uint MouseData, Flags, Time; public IntPtr ExtraInfo; }
+    private delegate IntPtr LowLevelMouseProc(int code, IntPtr wParam, IntPtr lParam);
+    private const int WhMouseLl = 14, WmLButtonDown = 0x0201, WmRButtonDown = 0x0204, WmMButtonDown = 0x0207;
+    private const uint GaRoot = 2;
 }
 
 public sealed class InputDialog : Window

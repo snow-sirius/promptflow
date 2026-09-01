@@ -29,6 +29,14 @@ public partial class ActionBarWindow : Window
                 Padding = new Thickness(9, 0, 9, 0),
                 ToolTip = "打开收藏夹"
             };
+            button.AllowDrop = true;
+            button.DragOver += (_, e) => { e.Effects = e.Data.GetDataPresent(typeof(ClipboardItem)) ? System.Windows.DragDropEffects.Move : System.Windows.DragDropEffects.None; e.Handled = true; };
+            button.Drop += (_, e) =>
+            {
+                if (e.Data.GetData(typeof(ClipboardItem)) is ClipboardItem item)
+                    _owner.MoveItemToFolder(item, folder.Id);
+                e.Handled = true;
+            };
             button.Click += RecentFolder_Click;
             RecentFoldersPanel.Children.Add(button);
         }
