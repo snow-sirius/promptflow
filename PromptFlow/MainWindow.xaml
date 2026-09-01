@@ -5,11 +5,12 @@
         WindowStyle="None" AllowsTransparency="True" Background="Transparent"
         Width="360" Height="260" ResizeMode="NoResize"
         ShowInTaskbar="False" Topmost="True" ShowActivated="False"
-        Loaded="Window_Loaded" Deactivated="Window_Deactivated">
+        Loaded="Window_Loaded">
     <Window.Resources>
         <DataTemplate x:Key="ItemTemplate" DataType="{x:Type models:ClipboardItem}">
             <Border Height="62" HorizontalAlignment="Stretch" Margin="0,2" Padding="10,7" Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource OutlineBrush}" BorderThickness="1" CornerRadius="8"
-                    MouseEnter="Item_MouseEnter" MouseLeave="Item_MouseLeave" MouseLeftButtonUp="Item_MouseLeftButtonUp">
+                    MouseEnter="Item_MouseEnter" MouseLeave="Item_MouseLeave" MouseLeftButtonUp="Item_MouseLeftButtonUp"
+                    AllowDrop="True" DragOver="ItemCard_DragOver" DragLeave="ItemCard_DragLeave" Drop="ItemCard_Drop">
                 <Grid>
                     <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                     <StackPanel>
@@ -24,7 +25,8 @@
             </Border>
         </DataTemplate>
         <DataTemplate x:Key="FolderTemplate" DataType="{x:Type models:Folder}">
-            <Border Height="52" HorizontalAlignment="Stretch" Padding="9,7" Margin="0,2" Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource OutlineBrush}" BorderThickness="1" CornerRadius="7">
+            <Border Height="52" HorizontalAlignment="Stretch" Padding="9,7" Margin="0,2" Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource OutlineBrush}" BorderThickness="1" CornerRadius="7"
+                    MouseLeftButtonUp="Folder_MouseLeftButtonUp" AllowDrop="True" DragOver="FolderCard_DragOver" DragLeave="FolderCard_DragLeave" Drop="FolderCard_Drop">
                 <Grid>
                     <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                     <TextBlock Text="{Binding Name}" Foreground="{StaticResource InkBrush}" TextTrimming="CharacterEllipsis"/>
@@ -38,8 +40,8 @@
             <Grid.RowDefinitions><RowDefinition/><RowDefinition Height="22"/></Grid.RowDefinitions>
             <Grid x:Name="HistoryContent">
                 <ListBox x:Name="ItemList" ItemsSource="{Binding}" ItemTemplate="{StaticResource ItemTemplate}" Background="Transparent" BorderThickness="0" Padding="0,1,0,0"
-                         ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                         HorizontalContentAlignment="Stretch" AllowDrop="True" Drop="ItemList_Drop">
+                         ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.CanContentScroll="False"
+                         HorizontalContentAlignment="Stretch" AllowDrop="True" Drop="ItemList_Drop" DragOver="ItemList_DragOver" PreviewMouseWheel="List_PreviewMouseWheel">
                     <ListBox.ItemContainerStyle>
                         <Style TargetType="ListBoxItem">
                             <Setter Property="Height" Value="68"/>
@@ -54,7 +56,7 @@
                 <Grid.ColumnDefinitions><ColumnDefinition Width="108"/><ColumnDefinition Width="6"/><ColumnDefinition/></Grid.ColumnDefinitions>
                 <ListBox x:Name="FolderList" Grid.Column="0" ItemsSource="{Binding}" ItemTemplate="{StaticResource FolderTemplate}" SelectionChanged="FolderList_SelectionChanged"
                          Background="Transparent" BorderThickness="0" AllowDrop="True" Drop="FolderList_Drop" ScrollViewer.VerticalScrollBarVisibility="Auto"
-                         ScrollViewer.HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.CanContentScroll="False" HorizontalContentAlignment="Stretch" DragOver="FolderList_DragOver" PreviewMouseWheel="List_PreviewMouseWheel">
                     <ListBox.ItemContainerStyle>
                         <Style TargetType="ListBoxItem">
                             <Setter Property="Height" Value="56"/>
@@ -67,7 +69,7 @@
                 <Border Grid.Column="1" Background="{StaticResource OutlineBrush}" Width="1" HorizontalAlignment="Center"/>
                 <ListBox x:Name="FavoriteItemList" Grid.Column="2" ItemsSource="{Binding}" ItemTemplate="{StaticResource ItemTemplate}" Background="Transparent" BorderThickness="0"
                          AllowDrop="True" Drop="FavoriteItemList_Drop" ScrollViewer.VerticalScrollBarVisibility="Auto"
-                         ScrollViewer.HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.CanContentScroll="False" HorizontalContentAlignment="Stretch" DragOver="FavoriteItemList_DragOver" PreviewMouseWheel="List_PreviewMouseWheel">
                     <ListBox.ItemContainerStyle>
                         <Style TargetType="ListBoxItem">
                             <Setter Property="Height" Value="68"/>

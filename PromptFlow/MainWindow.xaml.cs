@@ -10,6 +10,9 @@ using PromptFlow.Services;
 using System.IO;
 using System.Runtime.InteropServices;
 using WpfButton = System.Windows.Controls.Button;
+using WpfListBox = System.Windows.Controls.ListBox;
+using WpfDragEventArgs = System.Windows.DragEventArgs;
+using WpfGiveFeedbackEventHandler = System.Windows.GiveFeedbackEventHandler;
 using WpfMessageBox = System.Windows.MessageBox;
 using WpfPoint = System.Windows.Point;
 
@@ -31,22 +34,24 @@ public partial class MainWindow : Window
     private bool _suppressFolderSelection;
     private bool _contextMenuOpen;
     private ContextMenu? _activeContextMenu;
-    private bool _suppressMenuDeactivation;
     private long _selectedFolder;
     private WpfPoint _dragStart;
     private IntPtr _targetWindow;
     private IntPtr _targetFocusWindow;
     private long _draggedFolder;
     private bool _suppressNextItemClick;
+    private bool _suppressNextFolderClick;
+    private Border? _dragHighlight;
+    private System.Windows.Controls.Primitives.Popup? _dragPreviewPopup;
     private IntPtr _outsideMouseHook;
     private LowLevelMouseProc? _outsideMouseProc;
+    private long _outsideClickEnabledAt;
 
     public MainWindow()
     {
         InitializeComponent();
         _actionBar = new ActionBarWindow(this);
         _actionBar.SourceInitialized += (_, _) => ConfigureAsNonActivatingWindow(_actionBar);
-        _actionBar.Deactivated += (_, _) => HandleMenuDeactivated();
         _repository = new StorageRepository(_settings.Current.DataDirectory);
         ItemList.ItemsSource = _items; FavoriteItemList.ItemsSource = _favoriteItems; FolderList.ItemsSource = _folders;
         SourceInitialized += (_, _) => InitializeNativeServices();
@@ -110,13 +115,16 @@ public partial class MainWindow : Window
         _actionBar.Show();
         KeepWindowNonActivating(this);
         KeepWindowNonActivating(_actionBar);
+        // Starting from a taskbar/tray click can leave one mouse message in the
+        // low-level hook queue. Do not mistake that initiating click for an
+        // outside click and immediately dismiss the menus.
+        _outsideClickEnabledAt = Environment.TickCount64 + 350;
     }
-    private void Window_Deactivated(object sender, EventArgs e) => HandleMenuDeactivated();
-    internal void HandleMenuDeactivated() => Dispatcher.BeginInvoke(() =>
-    {
-        if (!_contextMenuOpen && !_suppressMenuDeactivation && !IsActive && !_actionBar.IsActive)
-            HideMenus();
-    });
+    // The popup windows deliberately use WS_EX_NOACTIVATE so the editor keeps
+    // focus. Their Deactivated event therefore fires during normal display and
+    // cannot be used as an outside-click signal; OutsideMouseCallback owns that
+    // responsibility instead.
+    internal void HandleMenuDeactivated() { }
     private void HideMenus()
     {
         _activeContextMenu?.SetCurrentValue(ContextMenu.IsOpenProperty, false);
@@ -138,11 +146,6 @@ public partial class MainWindow : Window
                 _activeContextMenu = null;
                 _contextMenuOpen = false;
             }
-            // WPF may close a ContextMenu itself before the low-level hook's
-            // deferred callback runs. Keep that dismissal from propagating to
-            // the floating window's deactivation handler.
-            _suppressMenuDeactivation = true;
-            Dispatcher.BeginInvoke(new Action(() => _suppressMenuDeactivation = false), DispatcherPriority.ContextIdle);
         };
         menu.IsOpen = true;
     }
@@ -150,11 +153,9 @@ public partial class MainWindow : Window
     private void CloseContextMenuOnly()
     {
         if (_activeContextMenu is null) return;
-        _suppressMenuDeactivation = true;
         _activeContextMenu.IsOpen = false;
         _activeContextMenu = null;
         _contextMenuOpen = false;
-        Dispatcher.BeginInvoke(new Action(() => _suppressMenuDeactivation = false), DispatcherPriority.ContextIdle);
     }
     private void Close_Click(object sender, RoutedEventArgs e) => HideMenus();
     private void Header_MouseLeftButtonDown(object sender, MouseButtonEventArgs e) { if (e.LeftButton == MouseButtonState.Pressed) DragMove(); }
@@ -175,6 +176,14 @@ public partial class MainWindow : Window
     {
         try
         {
+            // A recent-folder click is handled by the non-activating action bar.
+            // Re-read the foreground target when the cached handle is stale so
+            // that opening a folder from the shortcut bar still pastes into the
+            // editor that was active before the popup appeared.
+            var own = new WindowInteropHelper(this).Handle;
+            var bar = new WindowInteropHelper(_actionBar).Handle;
+            if (_targetWindow == IntPtr.Zero || !IsWindow(_targetWindow) || _targetWindow == own || _targetWindow == bar)
+                RememberTargetWindow();
             _monitor?.IgnoreNextClipboardChange();
             if (!ClipboardMonitor.TryPaste(item, plainText, out var error))
             {
@@ -236,19 +245,51 @@ public partial class MainWindow : Window
         {
             if (_favoritesMode)
             {
-                if (_favoriteItems.Count > 0)
-                    FavoriteItemList.ScrollIntoView(_favoriteItems[^1]);
+                ScrollListToEnd(FavoriteItemList, _favoriteItems.Count > 0 ? _favoriteItems[^1] : null);
             }
             else if (_items.Count > 0)
             {
-                ItemList.ScrollIntoView(_items[^1]);
+                ScrollListToEnd(ItemList, _items[^1]);
             }
         }), DispatcherPriority.Background);
+    }
+    private static void ScrollListToEnd(WpfListBox list, object? lastItem)
+    {
+        list.UpdateLayout();
+        var viewer = FindVisualChild<ScrollViewer>(list);
+        if (viewer is not null) viewer.ScrollToEnd();
+        else if (lastItem is not null) list.ScrollIntoView(lastItem);
     }
     private void History_Click(object sender, RoutedEventArgs e) { _favoritesMode=false; _directFolderMode=false; _selectedFolder=0; RefreshItems(); }
     private void Favorites_Click(object sender, RoutedEventArgs e) { _favoritesMode=true; _directFolderMode=false; _selectedFolder=_repository.GetFolders().FirstOrDefault()?.Id ?? 0; RefreshItems(); }
     private void RecentFolder_Click(object sender, RoutedEventArgs e) { if ((sender as WpfButton)?.Tag is Folder folder) SelectRecentFromBar(folder); }
     private void FolderList_SelectionChanged(object sender, SelectionChangedEventArgs e) { if (!_suppressFolderSelection && FolderList.SelectedItem is Folder folder) { _selectedFolder=folder.Id; _directFolderMode=false; _favoritesMode=true; _repository.MarkFolderUsed(folder.Id); RefreshItems(); } }
+    private void Folder_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (_suppressNextFolderClick)
+        {
+            _suppressNextFolderClick = false;
+            e.Handled = true;
+            return;
+        }
+        if (sender is Border { DataContext: Folder folder })
+        {
+            SelectFolder(folder);
+            e.Handled = true;
+        }
+    }
+
+    private void SelectFolder(Folder folder)
+    {
+        _selectedFolder = folder.Id;
+        _directFolderMode = false;
+        _favoritesMode = true;
+        _repository.MarkFolderUsed(folder.Id);
+        _suppressFolderSelection = true;
+        FolderList.SelectedItem = folder;
+        _suppressFolderSelection = false;
+        RefreshItems();
+    }
     private void Favorite_Click(object sender, RoutedEventArgs e)
     {
         if ((sender as WpfButton)?.Tag is not ClipboardItem item) return;
@@ -347,7 +388,7 @@ public partial class MainWindow : Window
         if (FindParent<ListBoxItem>(e.OriginalSource as DependencyObject)?.DataContext is ClipboardItem item)
         {
             _draggedFolder = _directFolderMode ? _selectedFolder : 0;
-            DragDrop.DoDragDrop(ItemList, item, System.Windows.DragDropEffects.Move);
+            RunItemDrag(ItemList, item);
             _suppressNextItemClick = true;
             _draggedFolder = 0;
         }
@@ -358,7 +399,7 @@ public partial class MainWindow : Window
         if (FindParent<ListBoxItem>(e.OriginalSource as DependencyObject)?.DataContext is ClipboardItem item)
         {
             _draggedFolder = _selectedFolder;
-            DragDrop.DoDragDrop(FavoriteItemList, item, System.Windows.DragDropEffects.Move);
+            RunItemDrag(FavoriteItemList, item);
             _suppressNextItemClick = true;
             _draggedFolder = 0;
         }
@@ -366,7 +407,191 @@ public partial class MainWindow : Window
     private void FolderList_PreviewMouseMove(object sender, System.Windows.Input.MouseEventArgs e)
     {
         if (e.LeftButton != MouseButtonState.Pressed || (e.GetPosition(FolderList) - _dragStart).Length < 8) return;
-        if (FindParent<ListBoxItem>(e.OriginalSource as DependencyObject)?.DataContext is Folder folder) DragDrop.DoDragDrop(FolderList, folder, System.Windows.DragDropEffects.Move);
+        if (FindParent<ListBoxItem>(e.OriginalSource as DependencyObject)?.DataContext is Folder folder)
+        {
+            OpenDragPreview(folder.Name);
+            WpfGiveFeedbackEventHandler feedback = (_, args) =>
+            {
+                UpdateDragPreview();
+                args.UseDefaultCursors = true;
+            };
+            FolderList.GiveFeedback += feedback;
+            try { DragDrop.DoDragDrop(FolderList, folder, System.Windows.DragDropEffects.Move); }
+            finally
+            {
+                FolderList.GiveFeedback -= feedback;
+                CloseDragPreview();
+                ClearDragHighlight();
+            }
+            _suppressNextFolderClick = true;
+        }
+    }
+
+    private void RunItemDrag(WpfListBox source, ClipboardItem item)
+    {
+        OpenDragPreview(item.Preview);
+        WpfGiveFeedbackEventHandler feedback = (_, args) =>
+        {
+            UpdateDragPreview();
+            args.UseDefaultCursors = true;
+        };
+        source.GiveFeedback += feedback;
+        try { DragDrop.DoDragDrop(source, item, System.Windows.DragDropEffects.Move); }
+        finally
+        {
+            source.GiveFeedback -= feedback;
+            CloseDragPreview();
+            ClearDragHighlight();
+        }
+    }
+
+    private void OpenDragPreview(string text)
+    {
+        CloseDragPreview();
+        var previewText = string.IsNullOrWhiteSpace(text) ? "剪贴板条目" : text.ReplaceLineEndings(" ");
+        var content = new Border
+        {
+            Width = 250,
+            Height = 54,
+            Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(245, 255, 255, 255)),
+            BorderBrush = (System.Windows.Media.Brush)FindResource("AccentBrush"),
+            BorderThickness = new Thickness(1.5),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(12, 0, 12, 0),
+            Opacity = 0.92,
+            Child = new TextBlock
+            {
+                Text = previewText,
+                Foreground = (System.Windows.Media.Brush)FindResource("InkBrush"),
+                FontSize = 13,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                VerticalAlignment = VerticalAlignment.Center
+            }
+        };
+        _dragPreviewPopup = new System.Windows.Controls.Primitives.Popup
+        {
+            AllowsTransparency = true,
+            StaysOpen = false,
+            IsHitTestVisible = false,
+            Placement = System.Windows.Controls.Primitives.PlacementMode.AbsolutePoint,
+            Child = content
+        };
+        UpdateDragPreview();
+        _dragPreviewPopup.IsOpen = true;
+    }
+
+    private void UpdateDragPreview()
+    {
+        if (_dragPreviewPopup is null) return;
+        var cursor = Forms.Cursor.Position;
+        var fromDevice = PresentationSource.FromVisual(this)?.CompositionTarget?.TransformFromDevice;
+        var scaleX = fromDevice?.M11 ?? 1d;
+        var scaleY = fromDevice?.M22 ?? 1d;
+        _dragPreviewPopup.HorizontalOffset = cursor.X * scaleX + 14;
+        _dragPreviewPopup.VerticalOffset = cursor.Y * scaleY + 14;
+    }
+
+    private void CloseDragPreview()
+    {
+        if (_dragPreviewPopup is null) return;
+        _dragPreviewPopup.IsOpen = false;
+        _dragPreviewPopup.Child = null;
+        _dragPreviewPopup = null;
+    }
+
+    private void List_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        if (sender is not WpfListBox list) return;
+        var viewer = FindVisualChild<ScrollViewer>(list);
+        if (viewer is null) return;
+        viewer.ScrollToVerticalOffset(Math.Max(0, viewer.VerticalOffset - e.Delta / 3d));
+        e.Handled = true;
+    }
+
+    private void ItemList_DragOver(object sender, WpfDragEventArgs e) => SetDragEffect(e, typeof(ClipboardItem));
+    private void FavoriteItemList_DragOver(object sender, WpfDragEventArgs e) => SetDragEffect(e, typeof(ClipboardItem));
+    private void FolderList_DragOver(object sender, WpfDragEventArgs e) => SetDragEffect(e, typeof(ClipboardItem), typeof(Folder));
+    private void ItemCard_DragOver(object sender, WpfDragEventArgs e) { SetDragEffect(e, typeof(ClipboardItem)); HighlightCard(sender as Border); }
+    private void FolderCard_DragOver(object sender, WpfDragEventArgs e) { SetDragEffect(e, typeof(ClipboardItem), typeof(Folder)); HighlightCard(sender as Border); }
+    private void ItemCard_DragLeave(object sender, WpfDragEventArgs e) => ClearDragHighlight();
+    private void FolderCard_DragLeave(object sender, WpfDragEventArgs e) => ClearDragHighlight();
+    private void ItemCard_Drop(object sender, WpfDragEventArgs e)
+    {
+        try
+        {
+            if (e.Data.GetData(typeof(ClipboardItem)) is ClipboardItem source &&
+                (sender as Border)?.DataContext is ClipboardItem target && source.Id != target.Id)
+            {
+                var folderId = _favoritesMode || _directFolderMode ? _selectedFolder : 0;
+                if (folderId > 0)
+                {
+                    var ordered = (_favoritesMode ? _favoriteItems : _items).Select(x => x.Id).ToList();
+                    var sourceIndex = ordered.IndexOf(source.Id);
+                    var targetIndex = ordered.IndexOf(target.Id);
+                    if (sourceIndex >= 0 && targetIndex >= 0)
+                    {
+                        ordered.RemoveAt(sourceIndex);
+                        if (sourceIndex < targetIndex) targetIndex--;
+                        ordered.Insert(Math.Clamp(targetIndex, 0, ordered.Count), source.Id);
+                        _repository.ReorderFolderItems(folderId, ordered);
+                        RefreshItems();
+                    }
+                }
+            }
+        }
+        finally
+        {
+            ClearDragHighlight();
+            e.Handled = true;
+        }
+    }
+    private void FolderCard_Drop(object sender, WpfDragEventArgs e)
+    {
+        try
+        {
+            if ((sender as Border)?.DataContext is not Folder target) return;
+            if (e.Data.GetData(typeof(ClipboardItem)) is ClipboardItem item)
+            {
+                MoveItemToFolder(item, target.Id);
+            }
+            else if (e.Data.GetData(typeof(Folder)) is Folder source && source.Id != target.Id)
+            {
+                var ordered = _folders.Select(f => f.Id).ToList();
+                var targetIndex = ordered.IndexOf(target.Id);
+                ordered.Remove(source.Id);
+                if (ordered.Count > 0 && targetIndex >= ordered.Count) targetIndex = ordered.Count - 1;
+                ordered.Insert(Math.Clamp(targetIndex, 0, ordered.Count), source.Id);
+                _repository.ReorderFolders(ordered);
+                RefreshItems();
+            }
+        }
+        finally
+        {
+            ClearDragHighlight();
+            e.Handled = true;
+        }
+    }
+
+    private static void SetDragEffect(WpfDragEventArgs e, params Type[] types)
+    {
+        e.Effects = types.Any(e.Data.GetDataPresent) ? System.Windows.DragDropEffects.Move : System.Windows.DragDropEffects.None;
+    }
+
+    private void HighlightCard(Border? card)
+    {
+        if (card is null || ReferenceEquals(_dragHighlight, card)) return;
+        ClearDragHighlight();
+        _dragHighlight = card;
+        card.BorderBrush = (System.Windows.Media.Brush)FindResource("AccentBrush");
+        card.BorderThickness = new Thickness(2);
+    }
+
+    private void ClearDragHighlight()
+    {
+        if (_dragHighlight is null) return;
+        _dragHighlight.BorderBrush = (System.Windows.Media.Brush)FindResource("OutlineBrush");
+        _dragHighlight.BorderThickness = new Thickness(1);
+        _dragHighlight = null;
     }
     private void Item_MouseEnter(object sender, System.Windows.Input.MouseEventArgs e) { if (sender is Border b && b.Child is Grid grid && grid.Children.OfType<Border>().FirstOrDefault() is Border preview) preview.Visibility=Visibility.Visible; }
     private void Item_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e) { if (sender is Border b && b.Child is Grid grid && grid.Children.OfType<Border>().FirstOrDefault() is Border preview) preview.Visibility=Visibility.Collapsed; }
@@ -391,6 +616,19 @@ public partial class MainWindow : Window
         { var menu = new ContextMenu(); var lockItem=new MenuItem{Header=folder.IsLocked?"解锁收藏夹":"锁定收藏夹"}; lockItem.Click+=(_,_)=>{_repository.SetFolderLock(folder.Id,!folder.IsLocked);RefreshItems();}; var delete = new MenuItem { Header = "删除收藏夹" }; delete.Click += (_, _) => { if (WpfMessageBox.Show("确定删除此收藏夹？其中的词条不会被删除。", "PromptFlow", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes) { _repository.DeleteFolder(folder.Id); if (_selectedFolder == folder.Id) _selectedFolder = 0; RefreshItems(); } }; menu.Items.Add(lockItem); menu.Items.Add(new Separator()); menu.Items.Add(delete); OpenContextMenu(menu); e.Handled=true; }
     }
     private static T? FindParent<T>(DependencyObject? child) where T:DependencyObject { while(child is not null){if(child is T match)return match;child=System.Windows.Media.VisualTreeHelper.GetParent(child);} return null; }
+    private static T? FindVisualChild<T>(DependencyObject? parent) where T : DependencyObject
+    {
+        if (parent is null) return null;
+        for (var i = 0; i < System.Windows.Media.VisualTreeHelper.GetChildrenCount(parent); i++)
+        {
+            var child = System.Windows.Media.VisualTreeHelper.GetChild(parent, i);
+            if (child is T match) return match;
+            var nested = FindVisualChild<T>(child);
+            if (nested is not null) return nested;
+        }
+        return null;
+    }
+
     private void EditItem(ClipboardItem item){var text=Prompt("编辑词条内容",item.TextContent??item.DisplayText);if(text is not null){item.TextContent=text;item.DisplayText=text.ReplaceLineEndings(" ").Trim();_repository.UpdateItem(item);RefreshItems();}}
     private static string? Prompt(string title, string value, Window? owner = null)
     {
@@ -447,6 +685,7 @@ public partial class MainWindow : Window
 
     internal void SelectHistoryFromBar() => History_Click(this, new RoutedEventArgs());
     internal void SelectFavoritesFromBar() => Favorites_Click(this, new RoutedEventArgs());
+    internal void RefreshPasteTarget() => RememberTargetWindow();
     internal void SelectRecentFromBar(Folder folder) { _selectedFolder = folder.Id; _repository.MarkFolderUsed(folder.Id); _favoritesMode = false; _directFolderMode = true; RefreshItems(); }
     internal void MoveItemToFolder(ClipboardItem item, long folderId)
     {
@@ -490,7 +729,8 @@ public partial class MainWindow : Window
 
     private IntPtr OutsideMouseCallback(int code, IntPtr wParam, IntPtr lParam)
     {
-        if (code >= 0 && IsMouseButtonDown(wParam) && (IsVisible || _actionBar.IsVisible))
+        if (code >= 0 && Environment.TickCount64 >= _outsideClickEnabledAt &&
+            IsMouseButtonDown(wParam) && (IsVisible || _actionBar.IsVisible))
         {
             var point = Marshal.PtrToStructure<MouseHookStruct>(lParam).Point;
             var clickedRoot = GetAncestor(WindowFromPoint(point), GaRoot);
@@ -525,7 +765,7 @@ public partial class MainWindow : Window
     private static bool IsMouseButtonDown(IntPtr message)
     {
         var value = message.ToInt32();
-        return value == WmLButtonDown || value == WmRButtonDown || value == WmMButtonDown;
+        return value == WmLButtonDown || value == WmRButtonDown || value == WmMButtonDown || value == WmXButtonDown;
     }
 
     private static bool FocusTargetWindow(IntPtr target, IntPtr targetFocus)
@@ -624,7 +864,7 @@ public partial class MainWindow : Window
     [StructLayout(LayoutKind.Sequential)] private struct Point { public int X, Y; }
     [StructLayout(LayoutKind.Sequential)] private struct MouseHookStruct { public Point Point; public uint MouseData, Flags, Time; public IntPtr ExtraInfo; }
     private delegate IntPtr LowLevelMouseProc(int code, IntPtr wParam, IntPtr lParam);
-    private const int WhMouseLl = 14, WmLButtonDown = 0x0201, WmRButtonDown = 0x0204, WmMButtonDown = 0x0207;
+    private const int WhMouseLl = 14, WmLButtonDown = 0x0201, WmRButtonDown = 0x0204, WmMButtonDown = 0x0207, WmXButtonDown = 0x020B;
     private const uint GaRoot = 2;
 }
 

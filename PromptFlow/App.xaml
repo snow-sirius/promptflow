@@ -42,6 +42,9 @@
              subtle 4px thumb is shown while scrolling or hovering. -->
         <Style TargetType="{x:Type ScrollBar}">
             <Setter Property="Width" Value="4"/>
+            <Setter Property="MinWidth" Value="4"/>
+            <Setter Property="MaxWidth" Value="4"/>
+            <Setter Property="HorizontalAlignment" Value="Right"/>
             <Setter Property="Background" Value="#9AA8B8"/>
             <Setter Property="Opacity" Value="0.72"/>
             <Setter Property="Template">
@@ -83,7 +86,11 @@
             <Style.Triggers>
                 <Trigger Property="Orientation" Value="Horizontal">
                     <Setter Property="Width" Value="Auto"/>
+                    <Setter Property="MinWidth" Value="0"/>
+                    <Setter Property="MaxWidth" Value="9999"/>
                     <Setter Property="Height" Value="4"/>
+                    <Setter Property="MinHeight" Value="4"/>
+                    <Setter Property="MaxHeight" Value="4"/>
                 </Trigger>
             </Style.Triggers>
         </Style>
