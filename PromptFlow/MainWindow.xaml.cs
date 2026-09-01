@@ -30,6 +30,8 @@ public partial class MainWindow : Window
     private bool _directFolderMode;
     private bool _suppressFolderSelection;
     private bool _contextMenuOpen;
+    private ContextMenu? _activeContextMenu;
+    private bool _suppressMenuDeactivation;
     private long _selectedFolder;
     private WpfPoint _dragStart;
     private IntPtr _targetWindow;
@@ -110,8 +112,50 @@ public partial class MainWindow : Window
         KeepWindowNonActivating(_actionBar);
     }
     private void Window_Deactivated(object sender, EventArgs e) => HandleMenuDeactivated();
-    internal void HandleMenuDeactivated() => Dispatcher.BeginInvoke(() => { if (!_contextMenuOpen && !IsActive && !_actionBar.IsActive) HideMenus(); });
-    private void HideMenus() { Hide(); _actionBar.Hide(); }
+    internal void HandleMenuDeactivated() => Dispatcher.BeginInvoke(() =>
+    {
+        if (!_contextMenuOpen && !_suppressMenuDeactivation && !IsActive && !_actionBar.IsActive)
+            HideMenus();
+    });
+    private void HideMenus()
+    {
+        _activeContextMenu?.SetCurrentValue(ContextMenu.IsOpenProperty, false);
+        _activeContextMenu = null;
+        _contextMenuOpen = false;
+        Hide();
+        _actionBar.Hide();
+    }
+
+    private void OpenContextMenu(ContextMenu menu)
+    {
+        _activeContextMenu?.SetCurrentValue(ContextMenu.IsOpenProperty, false);
+        _activeContextMenu = menu;
+        _contextMenuOpen = true;
+        menu.Closed += (_, _) =>
+        {
+            if (ReferenceEquals(_activeContextMenu, menu))
+            {
+                _activeContextMenu = null;
+                _contextMenuOpen = false;
+            }
+            // WPF may close a ContextMenu itself before the low-level hook's
+            // deferred callback runs. Keep that dismissal from propagating to
+            // the floating window's deactivation handler.
+            _suppressMenuDeactivation = true;
+            Dispatcher.BeginInvoke(new Action(() => _suppressMenuDeactivation = false), DispatcherPriority.ContextIdle);
+        };
+        menu.IsOpen = true;
+    }
+
+    private void CloseContextMenuOnly()
+    {
+        if (_activeContextMenu is null) return;
+        _suppressMenuDeactivation = true;
+        _activeContextMenu.IsOpen = false;
+        _activeContextMenu = null;
+        _contextMenuOpen = false;
+        Dispatcher.BeginInvoke(new Action(() => _suppressMenuDeactivation = false), DispatcherPriority.ContextIdle);
+    }
     private void Close_Click(object sender, RoutedEventArgs e) => HideMenus();
     private void Header_MouseLeftButtonDown(object sender, MouseButtonEventArgs e) { if (e.LeftButton == MouseButtonState.Pressed) DragMove(); }
 
@@ -237,7 +281,7 @@ public partial class MainWindow : Window
             }
             catch (Exception ex) { ShowOperationError("创建收藏夹失败", ex); }
         };
-        menu.Items.Add(create); menu.Closed += (_, _) => _contextMenuOpen = false; _contextMenuOpen = true; menu.IsOpen = true;
+        menu.Items.Add(create); OpenContextMenu(menu);
     }
     private void NewFolder_Click(object sender, RoutedEventArgs e)
     {
@@ -341,10 +385,10 @@ public partial class MainWindow : Window
     {
         if (e.OriginalSource is DependencyObject source && FindParent<ListBoxItem>(source) is ListBoxItem row && row.DataContext is ClipboardItem item)
         {
-            var menu = new ContextMenu(); var paste = new MenuItem { Header = "粘贴原格式" }; paste.Click += (_, _) => PasteToTarget(item, false); var plain = new MenuItem { Header = "粘贴为纯文本" }; plain.Click += (_, _) => PasteToTarget(item, true); var edit = new MenuItem { Header = "编辑词条" }; edit.Click += (_, _) => EditItem(item); var display = new MenuItem { Header = "编辑展示文字" }; display.Click += (_, _) => { var text=Prompt("展示文字", item.DisplayText); if(text is not null){item.DisplayText=text;_repository.UpdateItem(item);RefreshItems();} }; var delete = new MenuItem { Header = "删除词条" }; delete.Click += (_, _) => { if (WpfMessageBox.Show("确定删除此词条？", "PromptFlow", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes) { _repository.DeleteItem(item.Id); RefreshItems(); } }; menu.Items.Add(paste); menu.Items.Add(plain); menu.Items.Add(new Separator()); menu.Items.Add(edit); menu.Items.Add(display); menu.Items.Add(new Separator()); menu.Items.Add(delete); menu.Closed += (_, _) => _contextMenuOpen = false; _contextMenuOpen = true; menu.IsOpen=true; e.Handled=true;
+            var menu = new ContextMenu(); var paste = new MenuItem { Header = "粘贴原格式" }; paste.Click += (_, _) => PasteToTarget(item, false); var plain = new MenuItem { Header = "粘贴为纯文本" }; plain.Click += (_, _) => PasteToTarget(item, true); var edit = new MenuItem { Header = "编辑词条" }; edit.Click += (_, _) => EditItem(item); var display = new MenuItem { Header = "编辑展示文字" }; display.Click += (_, _) => { var text=Prompt("展示文字", item.DisplayText); if(text is not null){item.DisplayText=text;_repository.UpdateItem(item);RefreshItems();} }; var delete = new MenuItem { Header = "删除词条" }; delete.Click += (_, _) => { if (WpfMessageBox.Show("确定删除此词条？", "PromptFlow", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes) { _repository.DeleteItem(item.Id); RefreshItems(); } }; menu.Items.Add(paste); menu.Items.Add(plain); menu.Items.Add(new Separator()); menu.Items.Add(edit); menu.Items.Add(display); menu.Items.Add(new Separator()); menu.Items.Add(delete); OpenContextMenu(menu); e.Handled=true;
         }
         else if (e.OriginalSource is DependencyObject folderSource && FindParent<ListBoxItem>(folderSource) is ListBoxItem folderRow && folderRow.DataContext is Folder folder)
-        { var menu = new ContextMenu(); var lockItem=new MenuItem{Header=folder.IsLocked?"解锁收藏夹":"锁定收藏夹"}; lockItem.Click+=(_,_)=>{_repository.SetFolderLock(folder.Id,!folder.IsLocked);RefreshItems();}; var delete = new MenuItem { Header = "删除收藏夹" }; delete.Click += (_, _) => { if (WpfMessageBox.Show("确定删除此收藏夹？其中的词条不会被删除。", "PromptFlow", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes) { _repository.DeleteFolder(folder.Id); if (_selectedFolder == folder.Id) _selectedFolder = 0; RefreshItems(); } }; menu.Items.Add(lockItem); menu.Items.Add(new Separator()); menu.Items.Add(delete); menu.Closed += (_, _) => _contextMenuOpen = false; _contextMenuOpen = true; menu.IsOpen=true; e.Handled=true; }
+        { var menu = new ContextMenu(); var lockItem=new MenuItem{Header=folder.IsLocked?"解锁收藏夹":"锁定收藏夹"}; lockItem.Click+=(_,_)=>{_repository.SetFolderLock(folder.Id,!folder.IsLocked);RefreshItems();}; var delete = new MenuItem { Header = "删除收藏夹" }; delete.Click += (_, _) => { if (WpfMessageBox.Show("确定删除此收藏夹？其中的词条不会被删除。", "PromptFlow", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes) { _repository.DeleteFolder(folder.Id); if (_selectedFolder == folder.Id) _selectedFolder = 0; RefreshItems(); } }; menu.Items.Add(lockItem); menu.Items.Add(new Separator()); menu.Items.Add(delete); OpenContextMenu(menu); e.Handled=true; }
     }
     private static T? FindParent<T>(DependencyObject? child) where T:DependencyObject { while(child is not null){if(child is T match)return match;child=System.Windows.Media.VisualTreeHelper.GetParent(child);} return null; }
     private void EditItem(ClipboardItem item){var text=Prompt("编辑词条内容",item.TextContent??item.DisplayText);if(text is not null){item.TextContent=text;item.DisplayText=text.ReplaceLineEndings(" ").Trim();_repository.UpdateItem(item);RefreshItems();}}
@@ -446,15 +490,42 @@ public partial class MainWindow : Window
 
     private IntPtr OutsideMouseCallback(int code, IntPtr wParam, IntPtr lParam)
     {
-        if (code >= 0 && (wParam.ToInt32() == WmLButtonDown || wParam.ToInt32() == WmRButtonDown || wParam.ToInt32() == WmMButtonDown) && (IsVisible || _actionBar.IsVisible) && !_contextMenuOpen)
+        if (code >= 0 && IsMouseButtonDown(wParam) && (IsVisible || _actionBar.IsVisible))
         {
             var point = Marshal.PtrToStructure<MouseHookStruct>(lParam).Point;
-            var root = GetAncestor(WindowFromPoint(point), GaRoot);
-            var own = new WindowInteropHelper(this).Handle;
-            var bar = new WindowInteropHelper(_actionBar).Handle;
-            if (root != own && root != bar) Dispatcher.BeginInvoke(HideMenus, DispatcherPriority.Input);
+            var clickedRoot = GetAncestor(WindowFromPoint(point), GaRoot);
+
+            // Context menus are separate popup windows. The first click outside
+            // the popup only dismisses the popup; a later click can dismiss the
+            // floating windows themselves.
+            if (_contextMenuOpen)
+            {
+                var menuHandle = GetContextMenuHandle();
+                var menuRoot = menuHandle == IntPtr.Zero ? IntPtr.Zero : GetAncestor(menuHandle, GaRoot);
+                if (menuRoot == IntPtr.Zero || clickedRoot != menuRoot)
+                    Dispatcher.BeginInvoke(CloseContextMenuOnly, DispatcherPriority.Input);
+            }
+            else
+            {
+                var own = new WindowInteropHelper(this).Handle;
+                var bar = new WindowInteropHelper(_actionBar).Handle;
+                if (clickedRoot != own && clickedRoot != bar)
+                    Dispatcher.BeginInvoke(HideMenus, DispatcherPriority.Input);
+            }
         }
         return CallNextHookEx(_outsideMouseHook, code, wParam, lParam);
+    }
+
+    private IntPtr GetContextMenuHandle()
+    {
+        if (_activeContextMenu is null || !_activeContextMenu.IsOpen) return IntPtr.Zero;
+        return (PresentationSource.FromVisual(_activeContextMenu) as HwndSource)?.Handle ?? IntPtr.Zero;
+    }
+
+    private static bool IsMouseButtonDown(IntPtr message)
+    {
+        var value = message.ToInt32();
+        return value == WmLButtonDown || value == WmRButtonDown || value == WmMButtonDown;
     }
 
     private static bool FocusTargetWindow(IntPtr target, IntPtr targetFocus)
