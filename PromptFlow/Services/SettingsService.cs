@@ -30,6 +30,9 @@ public sealed class SettingsService
                 if (loaded is not null)
                 {
                     if (string.IsNullOrWhiteSpace(loaded.DataDirectory)) loaded.DataDirectory = GetDefaultDataDirectory();
+                    loaded.ShortcutFolderSlots ??= [null, null, null];
+                    while (loaded.ShortcutFolderSlots.Count < 3) loaded.ShortcutFolderSlots.Add(null);
+                    if (loaded.ShortcutFolderSlots.Count > 3) loaded.ShortcutFolderSlots = loaded.ShortcutFolderSlots.Take(3).ToList();
                     return loaded;
                 }
             }

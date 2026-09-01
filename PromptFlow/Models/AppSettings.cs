@@ -8,4 +8,5 @@ public sealed record AppSettings
     public int MaxHistoryItems { get; set; } = 500;
     public bool MonitorEnabled { get; set; } = true;
     public int MaxImageBytes { get; set; } = 10 * 1024 * 1024;
+    public List<long?> ShortcutFolderSlots { get; set; } = [null, null, null];
 }

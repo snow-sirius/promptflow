@@ -12,9 +12,13 @@
             </Grid.ColumnDefinitions>
             <Button Grid.Column="0" Content="历史" Click="History_Click" Width="54" Height="36" VerticalAlignment="Center" HorizontalContentAlignment="Center" VerticalContentAlignment="Center" ToolTip="历史"/>
             <Button Grid.Column="1" Content="收藏" Click="Favorites_Click" Width="54" Height="36" VerticalAlignment="Center" HorizontalContentAlignment="Center" VerticalContentAlignment="Center" ToolTip="收藏夹"/>
-            <ScrollViewer Grid.Column="2" x:Name="RecentFoldersScroller" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" Margin="3,0" Focusable="False" PanningMode="HorizontalOnly" CanContentScroll="False">
-                <StackPanel x:Name="RecentFoldersPanel" Orientation="Horizontal" VerticalAlignment="Center"/>
-            </ScrollViewer>
+            <Grid Grid.Column="2" x:Name="ShortcutSlotsGrid" Margin="3,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+            </Grid>
         </Grid>
     </Border>
 </Window>

@@ -17,52 +17,55 @@ public partial class ActionBarWindow : Window
 
     public void RefreshFolders(IEnumerable<Folder> folders)
     {
-        RecentFoldersPanel.Children.Clear();
-        foreach (var folder in folders.Where(f => f.LastUsedAt.HasValue).OrderByDescending(f => f.LastUsedAt).Take(4))
+        ShortcutSlotsGrid.Children.Clear();
+        var slots = _owner.GetShortcutFolders(folders);
+        for (var slotIndex = 0; slotIndex < slots.Count; slotIndex++)
         {
+            var folder = slots[slotIndex];
             var button = new WpfButton
             {
-                Content = folder.Name,
+                Content = new TextBlock
+                {
+                    Text = folder?.Name ?? "拖入收藏夹",
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    TextAlignment = TextAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center
+                },
                 Tag = folder,
                 Height = 36,
-                MinWidth = 84,
-                Padding = new Thickness(9, 0, 9, 0),
+                MinWidth = 0,
+                Padding = new Thickness(6, 0, 6, 0),
                 VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch,
                 HorizontalContentAlignment = System.Windows.HorizontalAlignment.Center,
                 VerticalContentAlignment = System.Windows.VerticalAlignment.Center,
-                ToolTip = "打开收藏夹"
+                ToolTip = folder?.Name ?? "将收藏夹卡片拖到这里"
             };
             button.AllowDrop = true;
             // Capture the editor that was active immediately before the
             // action-bar interaction. This keeps paste reliable when a folder
             // is opened from the shortcut strip.
             button.PreviewMouseLeftButtonDown += (_, _) => _owner.RefreshPasteTarget();
-            button.DragOver += (_, e) => { e.Effects = e.Data.GetDataPresent(typeof(ClipboardItem)) ? System.Windows.DragDropEffects.Move : System.Windows.DragDropEffects.None; e.Handled = true; };
+            var targetSlot = slotIndex;
+            button.DragOver += (_, e) =>
+            {
+                e.Effects = e.Data.GetDataPresent(typeof(ClipboardItem)) || e.Data.GetDataPresent(typeof(Folder))
+                    ? System.Windows.DragDropEffects.Move
+                    : System.Windows.DragDropEffects.None;
+                e.Handled = true;
+            };
             button.Drop += (_, e) =>
             {
-                if (e.Data.GetData(typeof(ClipboardItem)) is ClipboardItem item)
+                if (e.Data.GetData(typeof(Folder)) is Folder draggedFolder)
+                    _owner.AssignShortcutSlot(targetSlot, draggedFolder);
+                else if (e.Data.GetData(typeof(ClipboardItem)) is ClipboardItem item && folder is not null)
                     _owner.MoveItemToFolder(item, folder.Id);
                 e.Handled = true;
             };
             button.Click += RecentFolder_Click;
-            RecentFoldersPanel.Children.Add(button);
+            Grid.SetColumn(button, slotIndex);
+            ShortcutSlotsGrid.Children.Add(button);
         }
-
-        // Keep the create action in the scrollable strip so it remains the
-        // final item after all recent folders, including when the strip overflows.
-        var addButton = new WpfButton
-        {
-            Content = "+",
-            Width = 34,
-            Height = 36,
-            Padding = new Thickness(0),
-            VerticalAlignment = VerticalAlignment.Center,
-            HorizontalContentAlignment = System.Windows.HorizontalAlignment.Center,
-            VerticalContentAlignment = System.Windows.VerticalAlignment.Center,
-            ToolTip = "新建收藏夹"
-        };
-        addButton.Click += NewFolder_Click;
-        RecentFoldersPanel.Children.Add(addButton);
     }
 
     private void History_Click(object sender, RoutedEventArgs e) => _owner.SelectHistoryFromBar();

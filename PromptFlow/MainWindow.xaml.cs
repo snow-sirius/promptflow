@@ -691,6 +691,48 @@ public partial class MainWindow : Window
     internal void SelectHistoryFromBar() => History_Click(this, new RoutedEventArgs());
     internal void SelectFavoritesFromBar() => Favorites_Click(this, new RoutedEventArgs());
     internal void RefreshPasteTarget() => RememberTargetWindow();
+    internal IReadOnlyList<Folder?> GetShortcutFolders(IEnumerable<Folder> folders)
+    {
+        var allFolders = folders.ToList();
+        var byId = allFolders.ToDictionary(folder => folder.Id);
+        var configured = _settings.Current.ShortcutFolderSlots ?? [null, null, null];
+        while (configured.Count < 3) configured.Add(null);
+        if (configured.Count > 3) configured.RemoveRange(3, configured.Count - 3);
+
+        var result = new List<Folder?>(3);
+        var assignedIds = new HashSet<long>();
+        for (var index = 0; index < 3; index++)
+        {
+            var configuredId = configured[index];
+            if (configuredId.HasValue && byId.TryGetValue(configuredId.Value, out var configuredFolder))
+            {
+                result.Add(configuredFolder);
+                assignedIds.Add(configuredFolder.Id);
+            }
+            else result.Add(null);
+        }
+
+        var recent = allFolders.Where(folder => folder.LastUsedAt.HasValue && !assignedIds.Contains(folder.Id))
+            .OrderByDescending(folder => folder.LastUsedAt).GetEnumerator();
+        for (var index = 0; index < result.Count; index++)
+        {
+            if (result[index] is not null || !recent.MoveNext()) continue;
+            result[index] = recent.Current;
+            assignedIds.Add(recent.Current.Id);
+        }
+        return result;
+    }
+    internal void AssignShortcutSlot(int slotIndex, Folder folder)
+    {
+        if (slotIndex is < 0 or > 2) return;
+        var slots = _settings.Current.ShortcutFolderSlots ?? [null, null, null];
+        while (slots.Count < 3) slots.Add(null);
+        if (slots.Count > 3) slots.RemoveRange(3, slots.Count - 3);
+        slots[slotIndex] = folder.Id;
+        _settings.Current.ShortcutFolderSlots = slots;
+        _settings.Save(_settings.Current);
+        RefreshItems();
+    }
     internal void SelectRecentFromBar(Folder folder) { _selectedFolder = folder.Id; _repository.MarkFolderUsed(folder.Id); _favoritesMode = false; _directFolderMode = true; RefreshItems(); }
     internal void MoveItemToFolder(ClipboardItem item, long folderId)
     {
