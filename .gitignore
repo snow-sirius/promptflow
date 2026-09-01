@@ -1,0 +1,7 @@
+bin/
+obj/
+turn/
+publish/
+installer/output/
+*.user
+*.suo

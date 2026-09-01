@@ -1,0 +1,84 @@
+<Window x:Class="PromptFlow.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:models="clr-namespace:PromptFlow.Models"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        Width="360" Height="260" ResizeMode="NoResize"
+        ShowInTaskbar="False" Topmost="True" ShowActivated="False"
+        Loaded="Window_Loaded" Deactivated="Window_Deactivated">
+    <Window.Resources>
+        <DataTemplate x:Key="ItemTemplate" DataType="{x:Type models:ClipboardItem}">
+            <Border Height="62" HorizontalAlignment="Stretch" Margin="0,2" Padding="10,7" Background="White" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="8"
+                    MouseEnter="Item_MouseEnter" MouseLeave="Item_MouseLeave" MouseLeftButtonUp="Item_MouseLeftButtonUp">
+                <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <StackPanel>
+                        <TextBlock Text="{Binding Preview}" FontSize="13" Foreground="{StaticResource InkBrush}" TextTrimming="CharacterEllipsis" MaxHeight="34"/>
+                        <TextBlock Text="{Binding LastCopiedAt, StringFormat={}{0:MM-dd HH:mm}}" FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="0,5,0,0"/>
+                    </StackPanel>
+                    <Button Grid.Column="1" Tag="{Binding}" Content="{Binding IsFavorite, Converter={StaticResource BoolToStarConverter}}" Click="Favorite_Click" Width="30" Height="28" Padding="0" ToolTip="收藏到收藏夹"/>
+                    <Border x:Name="PreviewBorder" Visibility="Collapsed" Grid.ColumnSpan="2" Background="#202938" CornerRadius="6" Padding="10" Margin="0,48,42,0" Panel.ZIndex="3">
+                        <TextBlock Text="{Binding TextContent}" Foreground="White" TextWrapping="Wrap" MaxHeight="110"/>
+                    </Border>
+                </Grid>
+            </Border>
+        </DataTemplate>
+        <DataTemplate x:Key="FolderTemplate" DataType="{x:Type models:Folder}">
+            <Border Height="52" HorizontalAlignment="Stretch" Padding="9,7" Margin="0,2" Background="White" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="7">
+                <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <TextBlock Text="{Binding Name}" Foreground="{StaticResource InkBrush}" TextTrimming="CharacterEllipsis"/>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal"><TextBlock Text="{Binding ItemCount}" Foreground="{StaticResource MutedBrush}" Margin="8,0"/><TextBlock Text="{Binding IsLocked, Converter={StaticResource BoolToLockConverter}}"/></StackPanel>
+                </Grid>
+            </Border>
+        </DataTemplate>
+    </Window.Resources>
+    <Border Background="#F8F9FC" BorderBrush="#D9DDE8" BorderThickness="1" CornerRadius="12" Padding="10">
+        <Grid>
+            <Grid.RowDefinitions><RowDefinition/><RowDefinition Height="22"/></Grid.RowDefinitions>
+            <Grid x:Name="HistoryContent">
+                <ListBox x:Name="ItemList" ItemsSource="{Binding}" ItemTemplate="{StaticResource ItemTemplate}" Background="Transparent" BorderThickness="0" Padding="0,1,0,0"
+                         ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         HorizontalContentAlignment="Stretch" AllowDrop="True" Drop="ItemList_Drop">
+                    <ListBox.ItemContainerStyle>
+                        <Style TargetType="ListBoxItem">
+                            <Setter Property="Height" Value="68"/>
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                            <Setter Property="Padding" Value="0"/>
+                            <Setter Property="Margin" Value="0,1"/>
+                        </Style>
+                    </ListBox.ItemContainerStyle>
+                </ListBox>
+            </Grid>
+            <Grid x:Name="FavoritesContent" Visibility="Collapsed">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="108"/><ColumnDefinition Width="6"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                <ListBox x:Name="FolderList" Grid.Column="0" ItemsSource="{Binding}" ItemTemplate="{StaticResource FolderTemplate}" SelectionChanged="FolderList_SelectionChanged"
+                         Background="Transparent" BorderThickness="0" AllowDrop="True" Drop="FolderList_Drop" ScrollViewer.VerticalScrollBarVisibility="Auto"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
+                    <ListBox.ItemContainerStyle>
+                        <Style TargetType="ListBoxItem">
+                            <Setter Property="Height" Value="56"/>
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                            <Setter Property="Padding" Value="0"/>
+                            <Setter Property="Margin" Value="0,1"/>
+                        </Style>
+                    </ListBox.ItemContainerStyle>
+                </ListBox>
+                <Border Grid.Column="1" Background="#E5E7EB" Width="1" HorizontalAlignment="Center"/>
+                <ListBox x:Name="FavoriteItemList" Grid.Column="2" ItemsSource="{Binding}" ItemTemplate="{StaticResource ItemTemplate}" Background="Transparent" BorderThickness="0"
+                         AllowDrop="True" Drop="ItemList_Drop" ScrollViewer.VerticalScrollBarVisibility="Auto"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
+                    <ListBox.ItemContainerStyle>
+                        <Style TargetType="ListBoxItem">
+                            <Setter Property="Height" Value="68"/>
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                            <Setter Property="Padding" Value="0"/>
+                            <Setter Property="Margin" Value="0,1"/>
+                        </Style>
+                    </ListBox.ItemContainerStyle>
+                </ListBox>
+            </Grid>
+            <TextBlock x:Name="StatusText" Grid.Row="1" Foreground="{StaticResource MutedBrush}" FontSize="11" VerticalAlignment="Bottom" Margin="3,0,0,0" IsHitTestVisible="False"/>
+        </Grid>
+    </Border>
+</Window>
