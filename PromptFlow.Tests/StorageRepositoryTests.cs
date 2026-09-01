@@ -36,4 +36,41 @@ public sealed class StorageRepositoryTests
         }
         finally { if (Directory.Exists(path)) Directory.Delete(path, true); }
     }
+
+    [Fact]
+    public void RemovingLastFolderLinkClearsFavorite()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "promptflow-test-" + Guid.NewGuid());
+        try
+        {
+            using var repo = new StorageRepository(path);
+            var item = repo.UpsertClipboard(new ClipboardItem { TextContent = "folder-item", DisplayText = "folder-item", CreatedAt = DateTime.UtcNow, LastCopiedAt = DateTime.UtcNow }, 5);
+            var folder = repo.CreateFolder("Test");
+            repo.AddToFolder(item.Id, folder);
+            Assert.True(repo.GetFolderItems(folder).Single().IsFavorite);
+            repo.RemoveFromFolder(item.Id, folder);
+            Assert.False(repo.GetHistory(5).Single().IsFavorite);
+        }
+        finally { if (Directory.Exists(path)) Directory.Delete(path, true); }
+    }
+
+    [Fact]
+    public void HistoryLimitCountsOnlyUnfavoritedItems()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "promptflow-test-" + Guid.NewGuid());
+        try
+        {
+            using var repo = new StorageRepository(path);
+            var favorite = repo.UpsertClipboard(new ClipboardItem { TextContent = "favorite", DisplayText = "favorite", CreatedAt = DateTime.UtcNow, LastCopiedAt = DateTime.UtcNow }, 1);
+            repo.SetFavorite(favorite.Id, true);
+            repo.UpsertClipboard(new ClipboardItem { TextContent = "new-1", DisplayText = "new-1", CreatedAt = DateTime.UtcNow, LastCopiedAt = DateTime.UtcNow }, 1);
+            repo.UpsertClipboard(new ClipboardItem { TextContent = "new-2", DisplayText = "new-2", CreatedAt = DateTime.UtcNow, LastCopiedAt = DateTime.UtcNow }, 1);
+            var history = repo.GetHistory(10);
+            Assert.Equal(2, history.Count);
+            Assert.Contains(history, x => x.TextContent == "favorite" && x.IsFavorite);
+            Assert.Contains(history, x => x.TextContent == "new-2" && !x.IsFavorite);
+            Assert.DoesNotContain(history, x => x.TextContent == "new-1");
+        }
+        finally { if (Directory.Exists(path)) Directory.Delete(path, true); }
+    }
 }

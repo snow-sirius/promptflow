@@ -218,10 +218,29 @@ public partial class MainWindow : Window
         }
         if (menu.Items.Count > 0) menu.Items.Add(new Separator());
         var create = new MenuItem { Header = "新建收藏夹…" };
-        create.Click += (_, _) => { var name = Prompt("新建收藏夹", "收藏夹名称"); if (!string.IsNullOrWhiteSpace(name)) { var id = _repository.CreateFolder(name.Trim()); _repository.AddToFolder(item.Id, id); RefreshItems(); } };
+        create.Click += (_, _) =>
+        {
+            menu.IsOpen = false;
+            var name = Prompt("新建收藏夹", "收藏夹名称", this);
+            if (string.IsNullOrWhiteSpace(name)) return;
+            try
+            {
+                var id = _repository.CreateFolder(name.Trim());
+                _repository.AddToFolder(item.Id, id);
+                RefreshItems();
+            }
+            catch (Exception ex) { ShowOperationError("创建收藏夹失败", ex); }
+        };
         menu.Items.Add(create); menu.Closed += (_, _) => _contextMenuOpen = false; _contextMenuOpen = true; menu.IsOpen = true;
     }
-    private void NewFolder_Click(object sender, RoutedEventArgs e) { var name = Prompt("新建收藏夹", "收藏夹名称"); if (!string.IsNullOrWhiteSpace(name)) { _repository.CreateFolder(name.Trim()); RefreshItems(); } }
+    private void NewFolder_Click(object sender, RoutedEventArgs e)
+    {
+        HideMenus();
+        var name = Prompt("新建收藏夹", "收藏夹名称", this);
+        if (string.IsNullOrWhiteSpace(name)) return;
+        try { _repository.CreateFolder(name.Trim()); RefreshItems(); }
+        catch (Exception ex) { ShowOperationError("创建收藏夹失败", ex); }
+    }
     private void ClearHistory_Click(object sender, RoutedEventArgs e) { if (WpfMessageBox.Show("确定清空未收藏的历史记录？", "PromptFlow", MessageBoxButton.YesNo, MessageBoxImage.Question)==MessageBoxResult.Yes) { _repository.ClearHistory(); RefreshItems(); } }
     private void FolderList_Drop(object sender, System.Windows.DragEventArgs e)
     {
@@ -279,12 +298,34 @@ public partial class MainWindow : Window
     }
     private static T? FindParent<T>(DependencyObject? child) where T:DependencyObject { while(child is not null){if(child is T match)return match;child=System.Windows.Media.VisualTreeHelper.GetParent(child);} return null; }
     private void EditItem(ClipboardItem item){var text=Prompt("编辑词条内容",item.TextContent??item.DisplayText);if(text is not null){item.TextContent=text;item.DisplayText=text.ReplaceLineEndings(" ").Trim();_repository.UpdateItem(item);RefreshItems();}}
-    private static string? Prompt(string title,string value){var dialog=new InputDialog(title,value);return dialog.ShowDialog()==true?dialog.Value:null;}
+    private static string? Prompt(string title, string value, Window? owner = null)
+    {
+        var dialog = new InputDialog(title, value)
+        {
+            Owner = owner is { IsVisible: true } ? owner : null,
+            Topmost = true,
+            ShowActivated = true,
+            WindowStartupLocation = WindowStartupLocation.CenterScreen
+        };
+        return dialog.ShowDialog() == true ? dialog.Value : null;
+    }
+
+    private void ShowOperationError(string title, Exception exception)
+    {
+        StatusText.Text = $"{title}：{exception.Message}";
+        WpfMessageBox.Show(this, $"{title}\n{exception.Message}", "PromptFlow", MessageBoxButton.OK, MessageBoxImage.Error);
+    }
 
     private void Settings_Click(object sender, RoutedEventArgs e) => ShowSettings();
     private void ShowSettings()
     {
-        var dialog = new SettingsWindow(_settings.Current, _repository.GetExclusions()) { Owner = this };
+        var dialog = new SettingsWindow(_settings.Current, _repository.GetExclusions())
+        {
+            Owner = IsVisible ? this : null,
+            Topmost = true,
+            ShowActivated = true,
+            WindowStartupLocation = WindowStartupLocation.CenterScreen
+        };
         dialog.SaveRequested += (_, args) => ApplySettings(args.Settings, args.Exclusions);
         HideMenus();
         dialog.ShowDialog();
