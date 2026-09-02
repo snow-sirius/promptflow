@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS clipboard_items (
  id INTEGER PRIMARY KEY AUTOINCREMENT, text_content TEXT, html_content TEXT, rtf_content TEXT,
  image_png_blob BLOB, extra_formats_json TEXT, display_text TEXT NOT NULL, created_at TEXT NOT NULL,
  last_copied_at TEXT NOT NULL, is_favorite INTEGER NOT NULL DEFAULT 0);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_clipboard_text ON clipboard_items(text_content, html_content, rtf_content);
+DROP INDEX IF EXISTS idx_clipboard_text;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_clipboard_content ON clipboard_items(text_content, html_content, rtf_content, image_png_blob);
 CREATE TABLE IF NOT EXISTS folders (
  id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, sort_order INTEGER NOT NULL,
  is_locked INTEGER NOT NULL DEFAULT 0, last_used_at TEXT NULL);
@@ -85,10 +86,11 @@ INSERT INTO schema_version(version) SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM sch
             using var tx = _connection.BeginTransaction();
             using var find = _connection.CreateCommand();
             find.Transaction = tx;
-            find.CommandText = "SELECT id, created_at, is_favorite, display_text FROM clipboard_items WHERE text_content IS $text AND html_content IS $html AND rtf_content IS $rtf";
+            find.CommandText = "SELECT id, created_at, is_favorite, display_text FROM clipboard_items WHERE text_content IS $text AND html_content IS $html AND rtf_content IS $rtf AND image_png_blob IS $image";
             find.Parameters.AddWithValue("$text", (object?)item.TextContent ?? DBNull.Value);
             find.Parameters.AddWithValue("$html", (object?)item.HtmlContent ?? DBNull.Value);
             find.Parameters.AddWithValue("$rtf", (object?)item.RtfContent ?? DBNull.Value);
+            find.Parameters.AddWithValue("$image", (object?)item.ImagePng ?? DBNull.Value);
             using var reader = find.ExecuteReader();
             long id = 0; DateTime created = DateTime.UtcNow; bool favorite = item.IsFavorite; string display = item.DisplayText;
             if (reader.Read()) { id = reader.GetInt64(0); created = DateTime.Parse(reader.GetString(1)); favorite = reader.GetInt32(2) != 0; display = reader.GetString(3); }

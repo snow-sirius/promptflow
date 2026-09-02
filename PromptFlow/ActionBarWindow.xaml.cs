@@ -1,13 +1,18 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using PromptFlow.Models;
 using WpfButton = System.Windows.Controls.Button;
+using WpfPoint = System.Windows.Point;
 
 namespace PromptFlow;
 
 public partial class ActionBarWindow : Window
 {
     private readonly MainWindow _owner;
+    private WpfPoint _dragStart;
+    private Folder? _dragCandidate;
+    private bool _suppressClick;
 
     public ActionBarWindow(MainWindow owner)
     {
@@ -50,6 +55,15 @@ public partial class ActionBarWindow : Window
             // action-bar interaction. This keeps paste reliable when a folder
             // is opened from the shortcut strip.
             button.PreviewMouseLeftButtonDown += (_, _) => _owner.RefreshPasteTarget();
+            button.PreviewMouseLeftButtonDown += (_, e) => { _dragStart = e.GetPosition(button); _dragCandidate = folder; _suppressClick = false; };
+            button.PreviewMouseMove += (_, e) =>
+            {
+                if (_dragCandidate is null || e.LeftButton != MouseButtonState.Pressed) return;
+                if ((e.GetPosition(button) - _dragStart).Length < 8) return;
+                var dragged = _dragCandidate; _dragCandidate = null; _suppressClick = true;
+                DragDrop.DoDragDrop(button, dragged, System.Windows.DragDropEffects.Move);
+            };
+            button.PreviewMouseLeftButtonUp += (_, _) => _dragCandidate = null;
             var targetSlot = slotIndex;
             button.DragOver += (_, e) =>
             {
@@ -92,6 +106,7 @@ public partial class ActionBarWindow : Window
     private void Close_Click(object sender, RoutedEventArgs e) => _owner.CloseFromBar();
     private void RecentFolder_Click(object sender, RoutedEventArgs e)
     {
+        if (_suppressClick) { _suppressClick = false; return; }
         if ((sender as WpfButton)?.Tag is Folder folder) _owner.SelectRecentFromBar(folder);
     }
 }

@@ -419,7 +419,8 @@ public partial class MainWindow : Window
             WpfGiveFeedbackEventHandler feedback = (_, args) =>
             {
                 UpdateDragPreview();
-                args.UseDefaultCursors = true;
+                args.UseDefaultCursors = false;
+                Mouse.SetCursor(System.Windows.Input.Cursors.Arrow);
             };
             FolderList.GiveFeedback += feedback;
             try { DragDrop.DoDragDrop(FolderList, folder, System.Windows.DragDropEffects.Move); }
@@ -439,7 +440,8 @@ public partial class MainWindow : Window
         WpfGiveFeedbackEventHandler feedback = (_, args) =>
         {
             UpdateDragPreview();
-            args.UseDefaultCursors = true;
+            args.UseDefaultCursors = false;
+            Mouse.SetCursor(System.Windows.Input.Cursors.Arrow);
         };
         source.GiveFeedback += feedback;
         try { DragDrop.DoDragDrop(source, item, System.Windows.DragDropEffects.Move); }
@@ -622,7 +624,7 @@ public partial class MainWindow : Window
     {
         _hoverPreviewItem = null;
         _hoverPreviewTimer?.Stop();
-        CloseHoverPreview();
+        ScheduleHoverPreviewClose();
     }
 
     private void ShowHoverPreview(ClipboardItem item, FrameworkElement target)
@@ -638,6 +640,8 @@ public partial class MainWindow : Window
             CornerRadius = new CornerRadius(8),
             Padding = new Thickness(10)
         };
+        body.MouseEnter += (_, _) => _hoverPreviewTimer?.Stop();
+        body.MouseLeave += (_, _) => ScheduleHoverPreviewClose();
         if (item.ImagePng is { Length: > 0 } imageBytes)
         {
             body.Child = new System.Windows.Controls.Image
@@ -664,7 +668,7 @@ public partial class MainWindow : Window
         }
         _hoverPreviewPopup = new System.Windows.Controls.Primitives.Popup
         {
-            AllowsTransparency = true, StaysOpen = true, IsHitTestVisible = false,
+            AllowsTransparency = true, StaysOpen = true, IsHitTestVisible = true,
             PlacementTarget = target,
             Placement = System.Windows.Controls.Primitives.PlacementMode.Right,
             HorizontalOffset = 8, Child = body
@@ -690,6 +694,14 @@ public partial class MainWindow : Window
         _hoverPreviewPopup.IsOpen = false;
         _hoverPreviewPopup.Child = null;
         _hoverPreviewPopup = null;
+    }
+
+    private void ScheduleHoverPreviewClose()
+    {
+        _hoverPreviewTimer?.Stop();
+        _hoverPreviewTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(220) };
+        _hoverPreviewTimer.Tick += (_, _) => { _hoverPreviewTimer.Stop(); CloseHoverPreview(); };
+        _hoverPreviewTimer.Start();
     }
     private void Item_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
