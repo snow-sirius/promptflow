@@ -619,6 +619,15 @@ public partial class MainWindow : Window
         }
         else if (e.OriginalSource is DependencyObject folderSource && FindParent<ListBoxItem>(folderSource) is ListBoxItem folderRow && folderRow.DataContext is Folder folder)
         { var menu = new ContextMenu(); var lockItem=new MenuItem{Header=folder.IsLocked?"解锁收藏夹":"锁定收藏夹"}; lockItem.Click+=(_,_)=>{_repository.SetFolderLock(folder.Id,!folder.IsLocked);RefreshItems();}; var delete = new MenuItem { Header = "删除收藏夹" }; delete.Click += (_, _) => { if (WpfMessageBox.Show("确定删除此收藏夹？其中的词条不会被删除。", "PromptFlow", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes) { _repository.DeleteFolder(folder.Id); if (_selectedFolder == folder.Id) _selectedFolder = 0; RefreshItems(); } }; menu.Items.Add(lockItem); menu.Items.Add(new Separator()); menu.Items.Add(delete); OpenContextMenu(menu); e.Handled=true; }
+        else if (e.OriginalSource is DependencyObject listSource && FindParent<WpfListBox>(listSource) == FolderList)
+        {
+            var menu = new ContextMenu();
+            var create = new MenuItem { Header = "新建收藏夹" };
+            create.Click += (_, _) => NewFolder_Click(this, new RoutedEventArgs());
+            menu.Items.Add(create);
+            OpenContextMenu(menu);
+            e.Handled = true;
+        }
     }
     private static T? FindParent<T>(DependencyObject? child) where T:DependencyObject { while(child is not null){if(child is T match)return match;child=System.Windows.Media.VisualTreeHelper.GetParent(child);} return null; }
     private static T? FindVisualChild<T>(DependencyObject? parent) where T : DependencyObject
@@ -695,9 +704,8 @@ public partial class MainWindow : Window
     {
         var allFolders = folders.ToList();
         var byId = allFolders.ToDictionary(folder => folder.Id);
-        var configured = _settings.Current.ShortcutFolderSlots ?? [null, null, null];
-        while (configured.Count < 3) configured.Add(null);
-        if (configured.Count > 3) configured.RemoveRange(3, configured.Count - 3);
+        var configured = GetShortcutSlotIds();
+        var disabled = GetShortcutSlotDisabled();
 
         var result = new List<Folder?>(3);
         var assignedIds = new HashSet<long>();
@@ -716,21 +724,127 @@ public partial class MainWindow : Window
             .OrderByDescending(folder => folder.LastUsedAt).GetEnumerator();
         for (var index = 0; index < result.Count; index++)
         {
-            if (result[index] is not null || !recent.MoveNext()) continue;
+            if (result[index] is not null || disabled[index] || !recent.MoveNext()) continue;
             result[index] = recent.Current;
             assignedIds.Add(recent.Current.Id);
         }
         return result;
     }
-    internal void AssignShortcutSlot(int slotIndex, Folder folder)
+
+    private List<long?> GetShortcutSlotIds()
     {
-        if (slotIndex is < 0 or > 2) return;
         var slots = _settings.Current.ShortcutFolderSlots ?? [null, null, null];
         while (slots.Count < 3) slots.Add(null);
         if (slots.Count > 3) slots.RemoveRange(3, slots.Count - 3);
-        slots[slotIndex] = folder.Id;
+        return slots;
+    }
+
+    private List<bool> GetShortcutSlotLocks()
+    {
+        var locks = _settings.Current.ShortcutFolderSlotLocks ?? [false, false, false];
+        while (locks.Count < 3) locks.Add(false);
+        if (locks.Count > 3) locks.RemoveRange(3, locks.Count - 3);
+        return locks;
+    }
+
+    private List<bool> GetShortcutSlotDisabled()
+    {
+        var disabled = _settings.Current.ShortcutFolderSlotDisabled ?? [false, false, false];
+        while (disabled.Count < 3) disabled.Add(false);
+        if (disabled.Count > 3) disabled.RemoveRange(3, disabled.Count - 3);
+        return disabled;
+    }
+
+    private void SaveShortcutSlotState(List<long?> slots, List<bool> locks, List<bool> disabled)
+    {
         _settings.Current.ShortcutFolderSlots = slots;
+        _settings.Current.ShortcutFolderSlotLocks = locks;
+        _settings.Current.ShortcutFolderSlotDisabled = disabled;
         _settings.Save(_settings.Current);
+    }
+
+    internal void HandleShortcutFolderDrop(int targetSlot, Folder draggedFolder)
+    {
+        if (targetSlot is < 0 or > 2) return;
+        var resolved = GetShortcutFolders(_repository.GetFolders());
+        var sourceSlot = resolved.ToList().FindIndex(folder => folder?.Id == draggedFolder.Id);
+        var slots = GetShortcutSlotIds();
+        var locks = GetShortcutSlotLocks();
+        var disabled = GetShortcutSlotDisabled();
+
+        // Materialize automatically selected recent folders before a drag so
+        // subsequent swaps and removals operate on stable assignments.
+        for (var index = 0; index < 3; index++)
+        {
+            if (!slots[index].HasValue && resolved[index] is not null && !disabled[index])
+                slots[index] = resolved[index]!.Id;
+        }
+
+        if (sourceSlot >= 0)
+        {
+            if (sourceSlot == targetSlot) return;
+            (slots[sourceSlot], slots[targetSlot]) = (slots[targetSlot], slots[sourceSlot]);
+            (locks[sourceSlot], locks[targetSlot]) = (locks[targetSlot], locks[sourceSlot]);
+            (disabled[sourceSlot], disabled[targetSlot]) = (disabled[targetSlot], disabled[sourceSlot]);
+            SaveShortcutSlotState(slots, locks, disabled);
+            RefreshItems();
+            return;
+        }
+
+        if (locks[targetSlot])
+        {
+            StatusText.Text = "该快捷收藏夹已锁定，无法替换";
+            return;
+        }
+
+        slots[targetSlot] = draggedFolder.Id;
+        locks[targetSlot] = false;
+        disabled[targetSlot] = false;
+        SaveShortcutSlotState(slots, locks, disabled);
+        RefreshItems();
+    }
+
+    internal void ShowShortcutSlotMenu(int slotIndex, Folder folder, FrameworkElement placementTarget)
+    {
+        if (slotIndex is < 0 or > 2) return;
+        var locks = GetShortcutSlotLocks();
+        var menu = new ContextMenu
+        {
+            PlacementTarget = placementTarget,
+            Placement = System.Windows.Controls.Primitives.PlacementMode.MousePoint
+        };
+        var remove = new MenuItem { Header = "移除该快捷收藏夹", IsEnabled = !locks[slotIndex] };
+        remove.Click += (_, _) => RemoveShortcutSlot(slotIndex);
+        var lockItem = new MenuItem { Header = locks[slotIndex] ? "解锁快捷收藏夹" : "锁定快捷收藏夹" };
+        lockItem.Click += (_, _) => SetShortcutSlotLock(slotIndex, !locks[slotIndex], folder);
+        menu.Items.Add(remove);
+        menu.Items.Add(new Separator());
+        menu.Items.Add(lockItem);
+        OpenContextMenu(menu);
+    }
+
+    private void RemoveShortcutSlot(int slotIndex)
+    {
+        var slots = GetShortcutSlotIds();
+        var locks = GetShortcutSlotLocks();
+        var disabled = GetShortcutSlotDisabled();
+        if (locks[slotIndex]) return;
+        slots[slotIndex] = null;
+        locks[slotIndex] = false;
+        disabled[slotIndex] = true;
+        SaveShortcutSlotState(slots, locks, disabled);
+        RefreshItems();
+    }
+
+    private void SetShortcutSlotLock(int slotIndex, bool locked, Folder folder)
+    {
+        var slots = GetShortcutSlotIds();
+        var locks = GetShortcutSlotLocks();
+        var disabled = GetShortcutSlotDisabled();
+        if (!slots[slotIndex].HasValue && !disabled[slotIndex]) slots[slotIndex] = folder.Id;
+        locks[slotIndex] = locked;
+        disabled[slotIndex] = false;
+        SaveShortcutSlotState(slots, locks, disabled);
         RefreshItems();
     }
     internal void SelectRecentFromBar(Folder folder) { _selectedFolder = folder.Id; _repository.MarkFolderUsed(folder.Id); _favoritesMode = false; _directFolderMode = true; RefreshItems(); }

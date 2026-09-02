@@ -33,6 +33,12 @@ public sealed class SettingsService
                     loaded.ShortcutFolderSlots ??= [null, null, null];
                     while (loaded.ShortcutFolderSlots.Count < 3) loaded.ShortcutFolderSlots.Add(null);
                     if (loaded.ShortcutFolderSlots.Count > 3) loaded.ShortcutFolderSlots = loaded.ShortcutFolderSlots.Take(3).ToList();
+                    loaded.ShortcutFolderSlotLocks ??= [false, false, false];
+                    while (loaded.ShortcutFolderSlotLocks.Count < 3) loaded.ShortcutFolderSlotLocks.Add(false);
+                    if (loaded.ShortcutFolderSlotLocks.Count > 3) loaded.ShortcutFolderSlotLocks = loaded.ShortcutFolderSlotLocks.Take(3).ToList();
+                    loaded.ShortcutFolderSlotDisabled ??= [false, false, false];
+                    while (loaded.ShortcutFolderSlotDisabled.Count < 3) loaded.ShortcutFolderSlotDisabled.Add(false);
+                    if (loaded.ShortcutFolderSlotDisabled.Count > 3) loaded.ShortcutFolderSlotDisabled = loaded.ShortcutFolderSlotDisabled.Take(3).ToList();
                     return loaded;
                 }
             }

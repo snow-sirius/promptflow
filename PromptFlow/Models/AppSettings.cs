@@ -9,4 +9,6 @@ public sealed record AppSettings
     public bool MonitorEnabled { get; set; } = true;
     public int MaxImageBytes { get; set; } = 10 * 1024 * 1024;
     public List<long?> ShortcutFolderSlots { get; set; } = [null, null, null];
+    public List<bool> ShortcutFolderSlotLocks { get; set; } = [false, false, false];
+    public List<bool> ShortcutFolderSlotDisabled { get; set; } = [false, false, false];
 }
