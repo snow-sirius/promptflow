@@ -43,6 +43,9 @@ public partial class MainWindow : Window
     private bool _suppressNextFolderClick;
     private Border? _dragHighlight;
     private System.Windows.Controls.Primitives.Popup? _dragPreviewPopup;
+    private System.Windows.Controls.Primitives.Popup? _hoverPreviewPopup;
+    private DispatcherTimer? _hoverPreviewTimer;
+    private ClipboardItem? _hoverPreviewItem;
     private IntPtr _outsideMouseHook;
     private LowLevelMouseProc? _outsideMouseProc;
     private long _outsideClickEnabledAt;
@@ -127,6 +130,9 @@ public partial class MainWindow : Window
     internal void HandleMenuDeactivated() { }
     private void HideMenus()
     {
+        _hoverPreviewItem = null;
+        _hoverPreviewTimer?.Stop();
+        CloseHoverPreview();
         _activeContextMenu?.SetCurrentValue(ContextMenu.IsOpenProperty, false);
         _activeContextMenu = null;
         _contextMenuOpen = false;
@@ -312,7 +318,7 @@ public partial class MainWindow : Window
         create.Click += (_, _) =>
         {
             menu.IsOpen = false;
-            var name = Prompt("新建收藏夹", "收藏夹名称", this);
+            var name = Prompt("新建收藏夹", string.Empty, this, false, "收藏夹名称");
             if (string.IsNullOrWhiteSpace(name)) return;
             try
             {
@@ -327,7 +333,7 @@ public partial class MainWindow : Window
     private void NewFolder_Click(object sender, RoutedEventArgs e)
     {
         HideMenus();
-        var name = Prompt("新建收藏夹", "收藏夹名称", this);
+        var name = Prompt("新建收藏夹", string.Empty, this, false, "收藏夹名称");
         if (string.IsNullOrWhiteSpace(name)) return;
         try { _repository.CreateFolder(name.Trim()); RefreshItems(); }
         catch (Exception ex) { ShowOperationError("创建收藏夹失败", ex); }
@@ -598,8 +604,93 @@ public partial class MainWindow : Window
         _dragHighlight.BorderThickness = new Thickness(1);
         _dragHighlight = null;
     }
-    private void Item_MouseEnter(object sender, System.Windows.Input.MouseEventArgs e) { if (sender is Border b && b.Child is Grid grid && grid.Children.OfType<Border>().FirstOrDefault() is Border preview) preview.Visibility=Visibility.Visible; }
-    private void Item_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e) { if (sender is Border b && b.Child is Grid grid && grid.Children.OfType<Border>().FirstOrDefault() is Border preview) preview.Visibility=Visibility.Collapsed; }
+    private void Item_MouseEnter(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (sender is not Border { DataContext: ClipboardItem item } card) return;
+        _hoverPreviewItem = item;
+        _hoverPreviewTimer?.Stop();
+        _hoverPreviewTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(450) };
+        _hoverPreviewTimer.Tick += (_, _) =>
+        {
+            _hoverPreviewTimer.Stop();
+            if (ReferenceEquals(_hoverPreviewItem, item)) ShowHoverPreview(item, card);
+        };
+        _hoverPreviewTimer.Start();
+    }
+
+    private void Item_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        _hoverPreviewItem = null;
+        _hoverPreviewTimer?.Stop();
+        CloseHoverPreview();
+    }
+
+    private void ShowHoverPreview(ClipboardItem item, FrameworkElement target)
+    {
+        CloseHoverPreview();
+        var body = new System.Windows.Controls.Border
+        {
+            Width = 300,
+            MaxHeight = 190,
+            Background = TryFindResource("InkBrush") as System.Windows.Media.Brush ?? System.Windows.Media.Brushes.DarkSlateGray,
+            BorderBrush = TryFindResource("AccentBrush") as System.Windows.Media.Brush ?? System.Windows.Media.Brushes.Teal,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(10)
+        };
+        if (item.ImagePng is { Length: > 0 } imageBytes)
+        {
+            body.Child = new System.Windows.Controls.Image
+            {
+                Source = CreateBitmap(imageBytes), Width = 278, Height = 165,
+                Stretch = System.Windows.Media.Stretch.Uniform
+            };
+        }
+        else
+        {
+            body.Child = new ScrollViewer
+            {
+                MaxHeight = 168,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                Content = new TextBlock
+                {
+                    Text = item.TextContent ?? item.DisplayText,
+                    Foreground = System.Windows.Media.Brushes.White,
+                    TextWrapping = TextWrapping.Wrap,
+                    FontSize = 13
+                }
+            };
+        }
+        _hoverPreviewPopup = new System.Windows.Controls.Primitives.Popup
+        {
+            AllowsTransparency = true, StaysOpen = true, IsHitTestVisible = false,
+            PlacementTarget = target,
+            Placement = System.Windows.Controls.Primitives.PlacementMode.Right,
+            HorizontalOffset = 8, Child = body
+        };
+        _hoverPreviewPopup.IsOpen = true;
+    }
+
+    private static System.Windows.Media.Imaging.BitmapImage? CreateBitmap(byte[] bytes)
+    {
+        try
+        {
+            using var stream = new MemoryStream(bytes, writable: false);
+            var image = new System.Windows.Media.Imaging.BitmapImage();
+            image.BeginInit(); image.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+            image.StreamSource = stream; image.EndInit(); image.Freeze(); return image;
+        }
+        catch { return null; }
+    }
+
+    private void CloseHoverPreview()
+    {
+        if (_hoverPreviewPopup is null) return;
+        _hoverPreviewPopup.IsOpen = false;
+        _hoverPreviewPopup.Child = null;
+        _hoverPreviewPopup = null;
+    }
     private void Item_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
         if (_suppressNextItemClick) { _suppressNextItemClick = false; e.Handled = true; return; }
@@ -615,7 +706,9 @@ public partial class MainWindow : Window
     {
         if (e.OriginalSource is DependencyObject source && FindParent<ListBoxItem>(source) is ListBoxItem row && row.DataContext is ClipboardItem item)
         {
-            var menu = new ContextMenu(); var paste = new MenuItem { Header = "粘贴原格式" }; paste.Click += (_, _) => PasteToTarget(item, false); var plain = new MenuItem { Header = "粘贴为纯文本" }; plain.Click += (_, _) => PasteToTarget(item, true); var edit = new MenuItem { Header = "编辑词条" }; edit.Click += (_, _) => EditItem(item); var display = new MenuItem { Header = "编辑展示文字" }; display.Click += (_, _) => { var text=Prompt("展示文字", item.DisplayText); if(text is not null){item.DisplayText=text;_repository.UpdateItem(item);RefreshItems();} }; var delete = new MenuItem { Header = "删除词条" }; delete.Click += (_, _) => { if (WpfMessageBox.Show("确定删除此词条？", "PromptFlow", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes) { _repository.DeleteItem(item.Id); RefreshItems(); } }; menu.Items.Add(paste); menu.Items.Add(plain); menu.Items.Add(new Separator()); menu.Items.Add(edit); menu.Items.Add(display); menu.Items.Add(new Separator()); menu.Items.Add(delete); OpenContextMenu(menu); e.Handled=true;
+            var menu = new ContextMenu(); var paste = new MenuItem { Header = "粘贴原格式" }; paste.Click += (_, _) => PasteToTarget(item, false); var plain = new MenuItem { Header = "粘贴为纯文本" }; plain.Click += (_, _) => PasteToTarget(item, true); menu.Items.Add(paste); menu.Items.Add(plain); menu.Items.Add(new Separator());
+            if (item.ImagePng is null) { var edit = new MenuItem { Header = "编辑词条内容" }; edit.Click += (_, _) => EditItem(item); menu.Items.Add(edit); }
+            var display = new MenuItem { Header = "编辑展示文字" }; display.Click += (_, _) => { var text=Prompt("展示文字", item.DisplayText, this, false); if(text is not null){item.DisplayText=text;_repository.UpdateItem(item);RefreshItems();} }; var delete = new MenuItem { Header = "删除词条" }; delete.Click += (_, _) => { if (WpfMessageBox.Show("确定删除此词条？", "PromptFlow", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes) { _repository.DeleteItem(item.Id); RefreshItems(); } }; menu.Items.Add(display); menu.Items.Add(new Separator()); menu.Items.Add(delete); OpenContextMenu(menu); e.Handled=true;
         }
         else if (e.OriginalSource is DependencyObject folderSource && FindParent<ListBoxItem>(folderSource) is ListBoxItem folderRow && folderRow.DataContext is Folder folder)
         { var menu = new ContextMenu(); var lockItem=new MenuItem{Header=folder.IsLocked?"解锁收藏夹":"锁定收藏夹"}; lockItem.Click+=(_,_)=>{_repository.SetFolderLock(folder.Id,!folder.IsLocked);RefreshItems();}; var delete = new MenuItem { Header = "删除收藏夹" }; delete.Click += (_, _) => { if (WpfMessageBox.Show("确定删除此收藏夹？其中的词条不会被删除。", "PromptFlow", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes) { _repository.DeleteFolder(folder.Id); if (_selectedFolder == folder.Id) _selectedFolder = 0; RefreshItems(); } }; menu.Items.Add(lockItem); menu.Items.Add(new Separator()); menu.Items.Add(delete); OpenContextMenu(menu); e.Handled=true; }
@@ -643,10 +736,10 @@ public partial class MainWindow : Window
         return null;
     }
 
-    private void EditItem(ClipboardItem item){var text=Prompt("编辑词条内容",item.TextContent??item.DisplayText);if(text is not null){item.TextContent=text;item.DisplayText=text.ReplaceLineEndings(" ").Trim();_repository.UpdateItem(item);RefreshItems();}}
-    private static string? Prompt(string title, string value, Window? owner = null)
+    private void EditItem(ClipboardItem item){var text=Prompt("编辑词条内容",item.TextContent??item.DisplayText,this,true);if(text is not null){item.TextContent=text;item.DisplayText=text.ReplaceLineEndings(" ").Trim();_repository.UpdateItem(item);RefreshItems();}}
+    private static string? Prompt(string title, string value, Window? owner = null, bool multiline = false, string? placeholder = null)
     {
-        var dialog = new InputDialog(title, value)
+        var dialog = new InputDialog(title, value, multiline, placeholder)
         {
             Owner = owner is { IsVisible: true } ? owner : null,
             Topmost = true,
@@ -695,7 +788,7 @@ public partial class MainWindow : Window
     private void LoadSettingsFields() { }
     private void ToggleMonitor() => ApplySettings(_settings.Current with { MonitorEnabled = !_settings.Current.MonitorEnabled }, _repository.GetExclusions());
     public void ClearHistoryFromSettings() { _repository.ClearHistory(); RefreshItems(); }
-    protected override void OnClosed(EventArgs e){if(_outsideMouseHook!=IntPtr.Zero)UnhookWindowsHookEx(_outsideMouseHook);_actionBar.Close();_monitor?.Dispose();_hotkey?.Dispose();_tray?.Dispose();_repository.Dispose();base.OnClosed(e);}
+    protected override void OnClosed(EventArgs e){CloseHoverPreview();if(_outsideMouseHook!=IntPtr.Zero)UnhookWindowsHookEx(_outsideMouseHook);_actionBar.Close();_monitor?.Dispose();_hotkey?.Dispose();_tray?.Dispose();_repository.Dispose();base.OnClosed(e);}
 
     internal void SelectHistoryFromBar() => History_Click(this, new RoutedEventArgs());
     internal void SelectFavoritesFromBar() => Favorites_Click(this, new RoutedEventArgs());
@@ -1031,6 +1124,38 @@ public partial class MainWindow : Window
 
 public sealed class InputDialog : Window
 {
-    private readonly System.Windows.Controls.TextBox _box; public string Value => _box.Text;
-    public InputDialog(string title,string value){Title=title;Width=420;Height=170;WindowStartupLocation=WindowStartupLocation.CenterScreen;ResizeMode=ResizeMode.NoResize;WindowStyle=WindowStyle.ToolWindow;var panel=new StackPanel{Margin=new Thickness(18)};_box=new System.Windows.Controls.TextBox{Text=value};panel.Children.Add(_box);var buttons=new StackPanel{Orientation=System.Windows.Controls.Orientation.Horizontal,HorizontalAlignment=System.Windows.HorizontalAlignment.Right,Margin=new Thickness(0,15,0,0)};var ok=new WpfButton{Content="确定",IsDefault=true,Width=80};ok.Click+=(_,_)=>{DialogResult=true;Close();};var cancel=new WpfButton{Content="取消",IsCancel=true,Width=80};buttons.Children.Add(ok);buttons.Children.Add(cancel);panel.Children.Add(buttons);Content=panel;}
+    private readonly System.Windows.Controls.TextBox _box;
+    private readonly string? _placeholder;
+    public string Value => _box.Text;
+    public InputDialog(string title, string value, bool multiline = false, string? placeholder = null)
+    {
+        Title = title; Width = 460; Height = multiline ? 300 : 190;
+        WindowStartupLocation = WindowStartupLocation.CenterScreen; ResizeMode = ResizeMode.NoResize;
+        WindowStyle = WindowStyle.ToolWindow; Background = System.Windows.Media.Brushes.White;
+        _placeholder = placeholder;
+        var panel = new StackPanel { Margin = new Thickness(20) };
+        _box = new System.Windows.Controls.TextBox
+        {
+            Text = value,
+            FontSize = 14,
+            Padding = new Thickness(10, 8, 10, 8),
+            MinHeight = multiline ? 150 : 42,
+            AcceptsReturn = multiline,
+            TextWrapping = multiline ? TextWrapping.Wrap : TextWrapping.NoWrap,
+            VerticalScrollBarVisibility = multiline ? ScrollBarVisibility.Auto : ScrollBarVisibility.Hidden,
+            VerticalContentAlignment = multiline ? VerticalAlignment.Top : VerticalAlignment.Center
+        };
+        if (!string.IsNullOrEmpty(placeholder) && string.IsNullOrEmpty(value))
+        {
+            _box.Text = placeholder; _box.Foreground = System.Windows.Media.Brushes.Gray;
+            _box.GotFocus += (_, _) => { if (_box.Text == _placeholder) { _box.Clear(); _box.Foreground = System.Windows.Media.Brushes.Black; } };
+            _box.LostFocus += (_, _) => { if (string.IsNullOrWhiteSpace(_box.Text)) { _box.Text = _placeholder; _box.Foreground = System.Windows.Media.Brushes.Gray; } };
+        }
+        panel.Children.Add(_box);
+        var buttons = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal, HorizontalAlignment = System.Windows.HorizontalAlignment.Right, Margin = new Thickness(0, 18, 0, 0) };
+        var ok = new WpfButton { Content = "确定", IsDefault = true, Width = 82, Height = 34 };
+        ok.Click += (_, _) => { if (_box.Text == _placeholder) _box.Clear(); DialogResult = true; Close(); };
+        var cancel = new WpfButton { Content = "取消", IsCancel = true, Width = 82, Height = 34 };
+        buttons.Children.Add(ok); buttons.Children.Add(cancel); panel.Children.Add(buttons); Content = panel;
+    }
 }

@@ -8,19 +8,17 @@
         Loaded="Window_Loaded">
     <Window.Resources>
         <DataTemplate x:Key="ItemTemplate" DataType="{x:Type models:ClipboardItem}">
-            <Border Height="62" HorizontalAlignment="Stretch" Margin="0,2" Padding="10,7" Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource OutlineBrush}" BorderThickness="1" CornerRadius="8"
+            <Border Height="66" HorizontalAlignment="Stretch" Margin="0,2" Padding="8,6" Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource OutlineBrush}" BorderThickness="1" CornerRadius="8"
                     MouseEnter="Item_MouseEnter" MouseLeave="Item_MouseLeave" MouseLeftButtonUp="Item_MouseLeftButtonUp"
                     AllowDrop="True" DragOver="ItemCard_DragOver" DragLeave="ItemCard_DragLeave" Drop="ItemCard_Drop">
                 <Grid>
-                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                    <StackPanel>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <Image Grid.Column="0" Source="{Binding ImagePng, Converter={StaticResource ByteArrayToImageConverter}}" Width="48" Height="48" Stretch="UniformToFill" Margin="0,0,8,0" Visibility="{Binding ImagePng, Converter={StaticResource ImageBytesVisibilityConverter}}"/>
+                    <StackPanel Grid.Column="1">
                         <TextBlock Text="{Binding Preview}" FontSize="13" Foreground="{StaticResource InkBrush}" TextTrimming="CharacterEllipsis" MaxHeight="34"/>
                         <TextBlock Text="{Binding LastCopiedAt, StringFormat={}{0:MM-dd HH:mm}}" FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="0,5,0,0"/>
                     </StackPanel>
-                    <Button Grid.Column="1" Tag="{Binding}" Content="{Binding IsFavorite, Converter={StaticResource BoolToStarConverter}}" Click="Favorite_Click" Width="30" Height="28" Padding="0" ToolTip="收藏到收藏夹" Foreground="{StaticResource AccentBrush}" FontSize="16"/>
-                    <Border x:Name="PreviewBorder" Visibility="Collapsed" Grid.ColumnSpan="2" Background="#202938" CornerRadius="6" Padding="10" Margin="0,48,42,0" Panel.ZIndex="3">
-                        <TextBlock Text="{Binding TextContent}" Foreground="White" TextWrapping="Wrap" MaxHeight="110"/>
-                    </Border>
+                    <Button Grid.Column="2" Tag="{Binding}" Content="{Binding IsFavorite, Converter={StaticResource BoolToStarConverter}}" Click="Favorite_Click" Width="30" Height="28" Padding="0" ToolTip="收藏到收藏夹" Foreground="{StaticResource AccentBrush}" FontSize="16"/>
                 </Grid>
             </Border>
         </DataTemplate>

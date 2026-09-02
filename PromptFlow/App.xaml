@@ -13,6 +13,8 @@
         </ResourceDictionary.MergedDictionaries>
         <converters:BoolToLockConverter x:Key="BoolToLockConverter" />
         <converters:BoolToStarConverter x:Key="BoolToStarConverter" />
+        <converters:ByteArrayToImageConverter x:Key="ByteArrayToImageConverter" />
+        <converters:ImageBytesVisibilityConverter x:Key="ImageBytesVisibilityConverter" />
         <Color x:Key="Ink">#202938</Color>
         <Color x:Key="Muted">#728096</Color>
         <Color x:Key="Accent">#0E7490</Color>
