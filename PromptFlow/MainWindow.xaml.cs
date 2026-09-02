@@ -420,15 +420,18 @@ public partial class MainWindow : Window
             {
                 UpdateDragPreview();
                 args.UseDefaultCursors = false;
+                Mouse.OverrideCursor = System.Windows.Input.Cursors.Arrow;
                 Mouse.SetCursor(System.Windows.Input.Cursors.Arrow);
             };
             FolderList.GiveFeedback += feedback;
+            Mouse.OverrideCursor = System.Windows.Input.Cursors.Arrow;
             try { DragDrop.DoDragDrop(FolderList, folder, System.Windows.DragDropEffects.Move); }
             finally
             {
                 FolderList.GiveFeedback -= feedback;
                 CloseDragPreview();
                 ClearDragHighlight();
+                Mouse.OverrideCursor = null;
             }
             _suppressNextFolderClick = true;
         }
@@ -441,15 +444,18 @@ public partial class MainWindow : Window
         {
             UpdateDragPreview();
             args.UseDefaultCursors = false;
+            Mouse.OverrideCursor = System.Windows.Input.Cursors.Arrow;
             Mouse.SetCursor(System.Windows.Input.Cursors.Arrow);
         };
         source.GiveFeedback += feedback;
+        Mouse.OverrideCursor = System.Windows.Input.Cursors.Arrow;
         try { DragDrop.DoDragDrop(source, item, System.Windows.DragDropEffects.Move); }
         finally
         {
             source.GiveFeedback -= feedback;
             CloseDragPreview();
             ClearDragHighlight();
+            Mouse.OverrideCursor = null;
         }
     }
 

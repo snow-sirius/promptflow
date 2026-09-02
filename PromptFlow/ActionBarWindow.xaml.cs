@@ -4,6 +4,7 @@ using System.Windows.Input;
 using PromptFlow.Models;
 using WpfButton = System.Windows.Controls.Button;
 using WpfPoint = System.Windows.Point;
+using WpfGiveFeedbackEventHandler = System.Windows.GiveFeedbackEventHandler;
 
 namespace PromptFlow;
 
@@ -61,7 +62,20 @@ public partial class ActionBarWindow : Window
                 if (_dragCandidate is null || e.LeftButton != MouseButtonState.Pressed) return;
                 if ((e.GetPosition(button) - _dragStart).Length < 8) return;
                 var dragged = _dragCandidate; _dragCandidate = null; _suppressClick = true;
-                DragDrop.DoDragDrop(button, dragged, System.Windows.DragDropEffects.Move);
+                WpfGiveFeedbackEventHandler feedback = (_, args) =>
+                {
+                    args.UseDefaultCursors = false;
+                    Mouse.OverrideCursor = System.Windows.Input.Cursors.Arrow;
+                    Mouse.SetCursor(System.Windows.Input.Cursors.Arrow);
+                };
+                button.GiveFeedback += feedback;
+                Mouse.OverrideCursor = System.Windows.Input.Cursors.Arrow;
+                try { DragDrop.DoDragDrop(button, dragged, System.Windows.DragDropEffects.Move); }
+                finally
+                {
+                    button.GiveFeedback -= feedback;
+                    Mouse.OverrideCursor = null;
+                }
             };
             button.PreviewMouseLeftButtonUp += (_, _) => _dragCandidate = null;
             var targetSlot = slotIndex;

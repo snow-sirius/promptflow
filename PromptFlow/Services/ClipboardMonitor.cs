@@ -10,6 +10,9 @@ using WpfTextDataFormat = System.Windows.TextDataFormat;
 using WpfDataObject = System.Windows.DataObject;
 using System.Diagnostics;
 using System.Text;
+using System.Drawing;
+using System.Drawing.Imaging;
+using FormsClipboard = System.Windows.Forms.Clipboard;
 
 namespace PromptFlow.Services;
 
@@ -45,15 +48,7 @@ public sealed class ClipboardMonitor : IDisposable
             var text = ReadUnicodeText();
             var html = WpfClipboard.ContainsText(WpfTextDataFormat.Html) ? WpfClipboard.GetText(WpfTextDataFormat.Html) : null;
             var rtf = WpfClipboard.ContainsText(WpfTextDataFormat.Rtf) ? WpfClipboard.GetText(WpfTextDataFormat.Rtf) : null;
-            byte[]? image = null;
-            if (WpfClipboard.ContainsImage())
-            {
-                var bitmap = WpfClipboard.GetImage();
-                using var ms = new MemoryStream();
-                var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap)); encoder.Save(ms);
-                if (ms.Length <= _settings.Current.MaxImageBytes) image = ms.ToArray();
-                else Notice?.Invoke(this, "图片超过 10 MB，未保存到历史记录");
-            }
+            var image = TryReadImageBytes();
             if (text is null && html is null && rtf is null && image is null) return;
             var signature = Convert.ToBase64String(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"{text}\n{html}\n{rtf}\n{(image is null ? "" : Convert.ToBase64String(image))}")));
             if (signature == _lastSignature) return;
@@ -64,6 +59,69 @@ public sealed class ClipboardMonitor : IDisposable
         }
         catch (ExternalException) { }
         catch (Exception ex) { Notice?.Invoke(this, $"读取剪贴板失败：{ex.Message}"); }
+    }
+
+    private byte[]? TryReadImageBytes()
+    {
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            try
+            {
+                var data = WpfClipboard.GetDataObject();
+                if (data is not null)
+                {
+                    var raw = data.GetData(System.Windows.DataFormats.Bitmap, true);
+                    byte[]? bytes = raw switch
+                    {
+                        BitmapSource source => EncodeBitmapSource(source),
+                        Bitmap drawing => EncodeDrawingBitmap(drawing),
+                        byte[] buffer => buffer,
+                        _ => null
+                    };
+                    if (bytes is { Length: > 0 })
+                    {
+                        if (bytes.Length <= _settings.Current.MaxImageBytes) return bytes;
+                        Notice?.Invoke(this, "图片超过 10 MB，未保存到历史记录");
+                        return null;
+                    }
+                }
+                if (WpfClipboard.ContainsImage() && WpfClipboard.GetImage() is BitmapSource fallback)
+                {
+                    var bytes = EncodeBitmapSource(fallback);
+                    if (bytes is { Length: > 0 } && bytes.Length <= _settings.Current.MaxImageBytes) return bytes;
+                }
+                // WinForms reads CF_DIB/CF_DIBV5 from applications that expose
+                // delayed-rendered images but do not provide a WPF BitmapSource.
+                if (FormsClipboard.ContainsImage() && FormsClipboard.GetImage() is Image drawingFallback)
+                {
+                    using (drawingFallback)
+                    {
+                        var bytes = EncodeDrawingBitmap(new Bitmap(drawingFallback));
+                        if (bytes is { Length: > 0 } && bytes.Length <= _settings.Current.MaxImageBytes) return bytes;
+                    }
+                }
+            }
+            catch (ExternalException) { }
+            catch (Exception ex) when (attempt == 2) { Notice?.Invoke(this, $"读取图片失败：{ex.Message}"); }
+            Thread.Sleep(25);
+        }
+        return null;
+    }
+
+    private static byte[]? EncodeBitmapSource(BitmapSource source)
+    {
+        using var ms = new MemoryStream();
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(source));
+        encoder.Save(ms);
+        return ms.ToArray();
+    }
+
+    private static byte[]? EncodeDrawingBitmap(Bitmap bitmap)
+    {
+        using var ms = new MemoryStream();
+        bitmap.Save(ms, ImageFormat.Png);
+        return ms.ToArray();
     }
 
     private static string? ReadUnicodeText()
@@ -136,6 +194,9 @@ public sealed class ClipboardMonitor : IDisposable
                 bitmap.EndInit();
                 bitmap.Freeze();
                 data.SetImage(bitmap);
+                // Some native editors only consume a PNG stream (CF_PNG)
+                // instead of WPF's BitmapSource/CF_DIB representation.
+                data.SetData("PNG", item.ImagePng, true);
             }
             WpfClipboard.SetDataObject(data, true);
             error = null;
