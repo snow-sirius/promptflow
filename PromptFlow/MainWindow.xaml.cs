@@ -9,6 +9,8 @@ using PromptFlow.Models;
 using PromptFlow.Services;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Diagnostics;
+using System.Text;
 using WpfButton = System.Windows.Controls.Button;
 using WpfListBox = System.Windows.Controls.ListBox;
 using WpfDragEventArgs = System.Windows.DragEventArgs;
@@ -81,7 +83,7 @@ public partial class MainWindow : Window
     {
         _monitor = new ClipboardMonitor(_repository, _settings);
         _monitor.ItemCaptured += (_, _) => Dispatcher.Invoke(RefreshItems);
-        _monitor.Notice += (_, text) => StatusText.Text = text;
+        _monitor.Notice += (_, text) => { AppLog.Warn(text); StatusText.Text = text; };
     }
 
     private void Window_Loaded(object sender, RoutedEventArgs e) { RefreshItems(); LoadSettingsFields(); if (Environment.GetCommandLineArgs().Contains("--background")) Hide(); else ShowPopup(); }
@@ -175,6 +177,7 @@ public partial class MainWindow : Window
         {
             _targetWindow = foreground;
             _targetFocusWindow = GetFocusedControl(foreground);
+            AppLog.Info($"Remembered paste target. {DescribeWindow(_targetWindow)}; Focus=0x{_targetFocusWindow.ToInt64():X}");
         }
     }
 
@@ -193,27 +196,40 @@ public partial class MainWindow : Window
             _monitor?.IgnoreNextClipboardChange();
             if (!ClipboardMonitor.TryPaste(item, plainText, out var error))
             {
+                AppLog.Warn($"Paste command stopped because clipboard write failed. ItemId={item.Id}; Error={error}");
                 StatusText.Text = $"无法写入剪贴板：{error}";
                 return;
             }
 
             var target = _targetWindow;
             HideMenus();
+            AppLog.Info($"Starting paste delivery. ItemId={item.Id}; {DescribeWindow(target)}; Focus=0x{_targetFocusWindow.ToInt64():X}");
             if (target == IntPtr.Zero || !await PasteAsync(target, _targetFocusWindow))
+            {
+                AppLog.Warn($"Paste keystroke was not delivered. ItemId={item.Id}; Target=0x{target.ToInt64():X}");
                 StatusText.Text = "粘贴未送达：请确认目标窗口未以管理员权限运行";
+            }
         }
         catch (Exception ex)
         {
+            AppLog.Error($"Paste command failed. ItemId={item.Id}", ex);
             StatusText.Text = $"粘贴失败：{ex.Message}";
         }
     }
 
     private static async Task<bool> PasteAsync(IntPtr target, IntPtr targetFocus)
     {
+        AppLog.Info($"Paste delivery waiting for target. {DescribeWindow(target)}");
         await Task.Delay(80);
-        if (!FocusTargetWindow(target, targetFocus)) return false;
+        if (!FocusTargetWindow(target, targetFocus))
+        {
+            AppLog.Warn($"Paste delivery stopped because target could not be focused. {DescribeWindow(target)}");
+            return false;
+        }
         await Task.Delay(35);
-        return SendPasteKeystroke();
+        var sent = SendPasteKeystroke();
+        AppLog.Info($"Paste delivery completed. Sent={sent}; Foreground={DescribeWindow(GetForegroundWindow())}");
+        return sent;
     }
 
     private void RefreshItems()
@@ -650,10 +666,17 @@ public partial class MainWindow : Window
         body.MouseLeave += (_, _) => ScheduleHoverPreviewClose();
         if (item.ImagePng is { Length: > 0 } imageBytes)
         {
-            body.Child = new System.Windows.Controls.Image
+            var bitmap = CreateBitmap(imageBytes);
+            body.Child = bitmap is not null ? new System.Windows.Controls.Image
             {
-                Source = CreateBitmap(imageBytes), Width = 278, Height = 165,
+                Source = bitmap, Width = 278, Height = 165,
                 Stretch = System.Windows.Media.Stretch.Uniform
+            } : new TextBlock
+            {
+                Text = "图片解码失败",
+                Foreground = System.Windows.Media.Brushes.IndianRed,
+                VerticalAlignment = System.Windows.VerticalAlignment.Center,
+                HorizontalAlignment = System.Windows.HorizontalAlignment.Center
             };
         }
         else
@@ -682,16 +705,19 @@ public partial class MainWindow : Window
         _hoverPreviewPopup.IsOpen = true;
     }
 
-    private static System.Windows.Media.Imaging.BitmapImage? CreateBitmap(byte[] bytes)
+    private static System.Windows.Media.Imaging.BitmapSource? CreateBitmap(byte[] bytes)
     {
         try
         {
-            using var stream = new MemoryStream(bytes, writable: false);
-            var image = new System.Windows.Media.Imaging.BitmapImage();
-            image.BeginInit(); image.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
-            image.StreamSource = stream; image.EndInit(); image.Freeze(); return image;
+            var image = PngImageCodec.Decode(bytes, out var repairedTransparentAlpha);
+            AppLog.Info($"Hover preview PNG decoded. Bytes={bytes.Length}; Width={image.PixelWidth}; Height={image.PixelHeight}; PixelFormat={image.Format}; AlphaRepaired={repairedTransparentAlpha}");
+            return image;
         }
-        catch { return null; }
+        catch (Exception ex)
+        {
+            AppLog.Error($"Hover preview PNG decode failed. Bytes={bytes.Length}", ex);
+            return null;
+        }
     }
 
     private void CloseHoverPreview()
@@ -726,10 +752,10 @@ public partial class MainWindow : Window
         {
             var menu = new ContextMenu(); var paste = new MenuItem { Header = "粘贴原格式" }; paste.Click += (_, _) => PasteToTarget(item, false); var plain = new MenuItem { Header = "粘贴为纯文本" }; plain.Click += (_, _) => PasteToTarget(item, true); menu.Items.Add(paste); menu.Items.Add(plain); menu.Items.Add(new Separator());
             if (item.ImagePng is null) { var edit = new MenuItem { Header = "编辑词条内容" }; edit.Click += (_, _) => EditItem(item); menu.Items.Add(edit); }
-            var display = new MenuItem { Header = "编辑展示文字" }; display.Click += (_, _) => { var text=Prompt("展示文字", item.DisplayText, this, false); if(text is not null){item.DisplayText=text;_repository.UpdateItem(item);RefreshItems();} }; var delete = new MenuItem { Header = "删除词条" }; delete.Click += (_, _) => { if (WpfMessageBox.Show("确定删除此词条？", "PromptFlow", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes) { _repository.DeleteItem(item.Id); RefreshItems(); } }; menu.Items.Add(display); menu.Items.Add(new Separator()); menu.Items.Add(delete); OpenContextMenu(menu); e.Handled=true;
+            var display = new MenuItem { Header = "编辑展示文字" }; display.Click += (_, _) => { var text=Prompt("展示文字", item.DisplayText, this, false); if(text is not null){item.DisplayText=text;_repository.UpdateItem(item);RefreshItems();} }; var delete = new MenuItem { Header = "删除词条" }; delete.Click += (_, _) => { _repository.DeleteItem(item.Id); RefreshItems(); }; menu.Items.Add(display); menu.Items.Add(new Separator()); menu.Items.Add(delete); OpenContextMenu(menu); e.Handled=true;
         }
         else if (e.OriginalSource is DependencyObject folderSource && FindParent<ListBoxItem>(folderSource) is ListBoxItem folderRow && folderRow.DataContext is Folder folder)
-        { var menu = new ContextMenu(); var lockItem=new MenuItem{Header=folder.IsLocked?"解锁收藏夹":"锁定收藏夹"}; lockItem.Click+=(_,_)=>{_repository.SetFolderLock(folder.Id,!folder.IsLocked);RefreshItems();}; var delete = new MenuItem { Header = "删除收藏夹" }; delete.Click += (_, _) => { if (WpfMessageBox.Show("确定删除此收藏夹？其中的词条不会被删除。", "PromptFlow", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes) { _repository.DeleteFolder(folder.Id); if (_selectedFolder == folder.Id) _selectedFolder = 0; RefreshItems(); } }; menu.Items.Add(lockItem); menu.Items.Add(new Separator()); menu.Items.Add(delete); OpenContextMenu(menu); e.Handled=true; }
+        { var menu = new ContextMenu(); var lockItem=new MenuItem{Header=folder.IsLocked?"解锁收藏夹":"锁定收藏夹"}; lockItem.Click+=(_,_)=>{_repository.SetFolderLock(folder.Id,!folder.IsLocked);RefreshItems();}; var delete = new MenuItem { Header = "删除收藏夹" }; delete.Click += (_, _) => { _repository.DeleteFolder(folder.Id); if (_selectedFolder == folder.Id) _selectedFolder = 0; RefreshItems(); }; menu.Items.Add(lockItem); menu.Items.Add(new Separator()); menu.Items.Add(delete); OpenContextMenu(menu); e.Handled=true; }
         else if (e.OriginalSource is DependencyObject listSource && FindParent<WpfListBox>(listSource) == FolderList)
         {
             var menu = new ContextMenu();
@@ -1042,25 +1068,39 @@ public partial class MainWindow : Window
 
     private static bool FocusTargetWindow(IntPtr target, IntPtr targetFocus)
     {
-        if (!IsWindow(target)) return false;
+        if (!IsWindow(target))
+        {
+            AppLog.Warn($"Target window no longer exists. Handle=0x{target.ToInt64():X}");
+            return false;
+        }
         var currentThread = GetCurrentThreadId();
-        var targetThread = GetWindowThreadProcessId(target, out _);
+        var targetThread = GetWindowThreadProcessId(target, out var targetProcess);
         var attached = targetThread != 0 && targetThread != currentThread && AttachThreadInput(currentThread, targetThread, true);
+        AppLog.Info($"Focusing paste target. Handle=0x{target.ToInt64():X}; ProcessId={targetProcess}; CurrentThread={currentThread}; TargetThread={targetThread}; AttachThreadInput={attached}; FocusHandle=0x{targetFocus.ToInt64():X}");
         try
         {
             // Restoring an already visible/maximized target changes its user's window
             // layout. Only restore when the target is actually minimized.
-            if (IsIconic(target)) ShowWindow(target, SwRestore);
-            BringWindowToTop(target);
-            SetForegroundWindow(target);
-            if (targetFocus != IntPtr.Zero && IsWindow(targetFocus)) SetFocus(targetFocus);
+            var minimized = IsIconic(target);
+            var restored = !minimized || ShowWindow(target, SwRestore);
+            var broughtToTop = BringWindowToTop(target);
+            var foregroundRequested = SetForegroundWindow(target);
+            var focusRequested = targetFocus != IntPtr.Zero && IsWindow(targetFocus);
+            if (focusRequested) SetFocus(targetFocus);
             for (var attempt = 0; attempt < 3; attempt++)
             {
-                if (GetForegroundWindow() == target) return true;
+                if (GetForegroundWindow() == target)
+                {
+                    AppLog.Info($"Paste target focused. Attempt={attempt}; Restored={restored}; BringToTop={broughtToTop}; SetForeground={foregroundRequested}; SetFocus={focusRequested}");
+                    return true;
+                }
                 SetForegroundWindow(target);
                 Thread.Sleep(20);
             }
-            return GetForegroundWindow() == target;
+            var finalForeground = GetForegroundWindow();
+            var focused = finalForeground == target;
+            AppLog.Warn($"Paste target focus result. Success={focused}; Restored={restored}; BringToTop={broughtToTop}; SetForeground={foregroundRequested}; SetFocus={focusRequested}; Foreground=0x{finalForeground.ToInt64():X}");
+            return focused;
         }
         finally
         {
@@ -1085,7 +1125,23 @@ public partial class MainWindow : Window
             new Input { Type = InputKeyboard, Union = new InputUnion { Keyboard = new KeyboardInput { VirtualKey = VkControl, Flags = KeyEventKeyUp } } }
         };
         var sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<Input>());
-        return sent == inputs.Length;
+        var success = sent == inputs.Length;
+        var error = success ? 0 : Marshal.GetLastWin32Error();
+        AppLog.Info($"SendInput Ctrl+V. Sent={sent}; Expected={inputs.Length}; Success={success}; Win32Error={error}");
+        return success;
+    }
+
+    private static string DescribeWindow(IntPtr window)
+    {
+        if (window == IntPtr.Zero) return "Handle=0x0";
+        if (!IsWindow(window)) return $"Handle=0x{window.ToInt64():X}; Exists=False";
+        var thread = GetWindowThreadProcessId(window, out var processId);
+        var processName = "<unknown>";
+        try { processName = Process.GetProcessById((int)processId).ProcessName; }
+        catch { }
+        var className = new StringBuilder(256);
+        _ = GetClassName(window, className, className.Capacity);
+        return $"Handle=0x{window.ToInt64():X}; Process={processName}; ProcessId={processId}; Thread={thread}; Class={className}";
     }
 
     private const ushort VkControl = 0x11, VkV = 0x56;
@@ -1096,15 +1152,16 @@ public partial class MainWindow : Window
     private const uint SwpNoSize = 0x0001, SwpNoMove = 0x0002, SwpNoActivate = 0x0010, SwpShowWindow = 0x0040, SwRestore = 9, InputKeyboard = 1;
 
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
-    [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll", SetLastError = true)] private static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32.dll")] private static extern bool IsWindow(IntPtr hWnd);
     [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr hWnd);
     [DllImport("user32.dll")] private static extern IntPtr SetFocus(IntPtr hWnd);
     [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr hWnd, uint command);
-    [DllImport("user32.dll")] private static extern bool BringWindowToTop(IntPtr hWnd);
+    [DllImport("user32.dll", SetLastError = true)] private static extern bool BringWindowToTop(IntPtr hWnd);
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
     [DllImport("user32.dll")] private static extern bool GetGUIThreadInfo(uint idThread, ref GuiThreadInfo info);
-    [DllImport("user32.dll")] private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool attach);
+    [DllImport("user32.dll", SetLastError = true)] private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool attach);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
     [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] private static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int index);
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] private static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int index, IntPtr value);

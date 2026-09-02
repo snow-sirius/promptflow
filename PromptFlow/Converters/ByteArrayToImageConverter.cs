@@ -1,7 +1,6 @@
 using System.Globalization;
-using System.IO;
 using System.Windows.Data;
-using System.Windows.Media.Imaging;
+using PromptFlow.Services;
 
 namespace PromptFlow.Converters;
 
@@ -12,17 +11,16 @@ public sealed class ByteArrayToImageConverter : IValueConverter
         if (value is not byte[] bytes || bytes.Length == 0) return null;
         try
         {
-            using var stream = new MemoryStream(bytes, writable: false);
-            var image = new BitmapImage();
-            image.BeginInit();
-            image.CacheOption = BitmapCacheOption.OnLoad;
-            image.DecodePixelWidth = 72;
-            image.StreamSource = stream;
-            image.EndInit();
-            image.Freeze();
+            var image = PngImageCodec.Decode(bytes, out var repairedTransparentAlpha);
+            if (repairedTransparentAlpha)
+                AppLog.Warn($"Repaired all-zero alpha channel for history thumbnail. Bytes={bytes.Length}; Width={image.PixelWidth}; Height={image.PixelHeight}");
             return image;
         }
-        catch { return null; }
+        catch (Exception ex)
+        {
+            AppLog.Error($"Thumbnail PNG decode failed. Bytes={bytes.Length}", ex);
+            return null;
+        }
     }
 
     public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) => throw new NotSupportedException();
