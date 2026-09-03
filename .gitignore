@@ -6,5 +6,6 @@ dist/
 installer/output/
 TestResults/
 .vs/
+AGENTS.md
 *.user
 *.suo

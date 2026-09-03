@@ -39,10 +39,10 @@ dotnet test PromptFlow.Tests\PromptFlow.Tests.csproj
 dotnet publish PromptFlow\PromptFlow.csproj -c Release -r win-x64 --self-contained true -o publish
 ```
 
-使用 Inno Setup 生成安装包：
+将 Inno Setup 的 `ISCC.exe` 加入 `PATH` 后，使用以下命令生成安装包：
 
 ```powershell
-& 'C:\Users\Huawei\AppData\Local\Programs\Inno Setup 6\ISCC.exe' installer\PromptFlow.iss
+ISCC.exe installer\PromptFlow.iss
 ```
 
 产物位于 `installer\output`，不会提交到 Git 仓库。
@@ -86,10 +86,10 @@ dotnet test PromptFlow.Tests\PromptFlow.Tests.csproj
 dotnet publish PromptFlow\PromptFlow.csproj -c Release -r win-x64 --self-contained true -o publish
 ```
 
-Build the installer with Inno Setup:
+After adding Inno Setup's `ISCC.exe` to `PATH`, build the installer with:
 
 ```powershell
-& 'C:\Users\Huawei\AppData\Local\Programs\Inno Setup 6\ISCC.exe' installer\PromptFlow.iss
+ISCC.exe installer\PromptFlow.iss
 ```
 
 The installer is written to `installer\output` and is intentionally not committed to Git.
