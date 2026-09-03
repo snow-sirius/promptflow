@@ -16,12 +16,14 @@ public sealed class SettingsSaveEventArgs : EventArgs
 public partial class SettingsWindow : Window
 {
     private readonly AppSettings _initial;
+    private readonly Func<int> _clearHistory;
     public event EventHandler<SettingsSaveEventArgs>? SaveRequested;
 
-    public SettingsWindow(AppSettings settings, IEnumerable<string> exclusions)
+    public SettingsWindow(AppSettings settings, IEnumerable<string> exclusions, Func<int> clearHistory)
     {
         InitializeComponent();
         _initial = settings;
+        _clearHistory = clearHistory;
         AutoStartCheck.IsChecked = settings.StartWithWindows;
         MonitorCheck.IsChecked = settings.MonitorEnabled;
         HotkeyBox.Text = settings.Hotkey;
@@ -30,7 +32,6 @@ public partial class SettingsWindow : Window
         ExclusionsBox.Text = string.Join(Environment.NewLine, exclusions);
     }
 
-    private void Header_MouseLeftButtonDown(object sender, MouseButtonEventArgs e) { if (e.LeftButton == MouseButtonState.Pressed) DragMove(); }
     private void HotkeyBox_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
@@ -77,9 +78,10 @@ public partial class SettingsWindow : Window
     }
     private void ClearHistory_Click(object sender, RoutedEventArgs e)
     {
-        if (Owner is MainWindow owner && System.Windows.MessageBox.Show("确定清空未收藏的历史记录？", "PromptFlow", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+        if (System.Windows.MessageBox.Show(this, "确定清空未收藏的历史记录？", "PromptFlow", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
         {
-            owner.ClearHistoryFromSettings();
+            var deletedCount = _clearHistory();
+            System.Windows.MessageBox.Show(this, deletedCount == 0 ? "没有可清空的未收藏历史。" : $"已清空 {deletedCount} 条未收藏历史。", "PromptFlow", MessageBoxButton.OK, MessageBoxImage.Information);
         }
     }
     private void Save_Click(object sender, RoutedEventArgs e)

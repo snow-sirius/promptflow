@@ -15,6 +15,7 @@ OutputBaseFilename=PromptFlow-Setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile=..\PromptFlow\Assets\PromptFlow.ico
 PrivilegesRequired=lowest
 UninstallDisplayIcon={app}\{#MyAppExeName}
 
@@ -26,8 +27,8 @@ Name: "cleandata"; Description: "卸载时删除用户数据"; Flags: unchecked
 Source: "..\publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\PromptFlow"; Filename: "{app}\{#MyAppExeName}"
-Name: "{autodesktop}\PromptFlow"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{group}\PromptFlow"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\Assets\PromptFlow.ico"
+Name: "{autodesktop}\PromptFlow"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\Assets\PromptFlow.ico"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "启动 PromptFlow"; Flags: nowait postinstall skipifsilent

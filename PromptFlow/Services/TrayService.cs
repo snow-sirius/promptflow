@@ -1,4 +1,5 @@
 using System.Drawing;
+using System.IO;
 using Forms = System.Windows.Forms;
 
 namespace PromptFlow.Services;
@@ -6,6 +7,7 @@ namespace PromptFlow.Services;
 public sealed class TrayService : IDisposable
 {
     private readonly Forms.NotifyIcon _icon;
+    private readonly Icon _applicationIcon;
     public event EventHandler? OpenRequested;
     public event EventHandler? SettingsRequested;
     public event EventHandler? ExitRequested;
@@ -15,7 +17,8 @@ public sealed class TrayService : IDisposable
     private Forms.ToolStripMenuItem? _toggleItem;
     public TrayService()
     {
-        _icon = new Forms.NotifyIcon { Icon = SystemIcons.Application, Visible = true, Text = "PromptFlow AI 剪贴板" };
+        _applicationIcon = LoadApplicationIcon();
+        _icon = new Forms.NotifyIcon { Icon = _applicationIcon, Visible = true, Text = "PromptFlow AI 剪贴板" };
         _icon.DoubleClick += (_, _) => OpenRequested?.Invoke(this, EventArgs.Empty);
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add("打开剪贴板", null, (_, _) => OpenRequested?.Invoke(this, EventArgs.Empty));
@@ -25,5 +28,18 @@ public sealed class TrayService : IDisposable
         menu.Items.Add("退出", null, (_, _) => ExitRequested?.Invoke(this, EventArgs.Empty));
         _icon.ContextMenuStrip = menu;
     }
-    public void Dispose(){_icon.Visible=false;_icon.Dispose();}
+    private static Icon LoadApplicationIcon()
+    {
+        try
+        {
+            var path = Path.Combine(AppContext.BaseDirectory, "Assets", "PromptFlow.ico");
+            using var icon = new Icon(path);
+            return (Icon)icon.Clone();
+        }
+        catch
+        {
+            return (Icon)SystemIcons.Application.Clone();
+        }
+    }
+    public void Dispose(){_icon.Visible=false;_icon.Dispose();_applicationIcon.Dispose();}
 }

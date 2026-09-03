@@ -788,7 +788,9 @@ public partial class MainWindow : Window
             Owner = owner is { IsVisible: true } ? owner : null,
             Topmost = true,
             ShowActivated = true,
-            WindowStartupLocation = WindowStartupLocation.CenterScreen
+            WindowStartupLocation = owner is { IsVisible: true }
+                ? WindowStartupLocation.CenterOwner
+                : WindowStartupLocation.CenterScreen
         };
         return dialog.ShowDialog() == true ? dialog.Value : null;
     }
@@ -802,7 +804,7 @@ public partial class MainWindow : Window
     private void Settings_Click(object sender, RoutedEventArgs e) => ShowSettings();
     private void ShowSettings()
     {
-        var dialog = new SettingsWindow(_settings.Current, _repository.GetExclusions())
+        var dialog = new SettingsWindow(_settings.Current, _repository.GetExclusions(), ClearHistoryFromSettings)
         {
             Owner = IsVisible ? this : null,
             Topmost = true,
@@ -831,7 +833,13 @@ public partial class MainWindow : Window
     }
     private void LoadSettingsFields() { }
     private void ToggleMonitor() => ApplySettings(_settings.Current with { MonitorEnabled = !_settings.Current.MonitorEnabled }, _repository.GetExclusions());
-    public void ClearHistoryFromSettings() { _repository.ClearHistory(); RefreshItems(); }
+    public int ClearHistoryFromSettings()
+    {
+        var deletedCount = _repository.ClearHistory();
+        AppLog.Info($"Cleared non-favorite history from settings. DeletedCount={deletedCount}");
+        RefreshItems();
+        return deletedCount;
+    }
     protected override void OnClosed(EventArgs e){CloseHoverPreview();if(_outsideMouseHook!=IntPtr.Zero)UnhookWindowsHookEx(_outsideMouseHook);_actionBar.Close();_monitor?.Dispose();_hotkey?.Dispose();_tray?.Dispose();_repository.Dispose();base.OnClosed(e);}
 
     internal void SelectHistoryFromBar() => History_Click(this, new RoutedEventArgs());
@@ -1204,33 +1212,132 @@ public sealed class InputDialog : Window
     public string Value => _box.Text;
     public InputDialog(string title, string value, bool multiline = false, string? placeholder = null)
     {
-        Title = title; Width = 460; Height = multiline ? 300 : 190;
-        WindowStartupLocation = WindowStartupLocation.CenterScreen; ResizeMode = ResizeMode.NoResize;
-        WindowStyle = WindowStyle.ToolWindow; Background = System.Windows.Media.Brushes.White;
+        Title = title;
+        Width = 440;
+        Height = multiline ? 326 : 212;
+        WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        ResizeMode = ResizeMode.NoResize;
+        WindowStyle = WindowStyle.None;
+        AllowsTransparency = true;
+        Background = System.Windows.Media.Brushes.Transparent;
+        ShowInTaskbar = false;
         _placeholder = placeholder;
-        var panel = new StackPanel { Margin = new Thickness(20) };
+        var dialogSurface = new Border
+        {
+            Background = System.Windows.Media.Brushes.White,
+            BorderBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(221, 227, 236)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(20),
+            Effect = new System.Windows.Media.Effects.DropShadowEffect
+            {
+                Color = System.Windows.Media.Color.FromArgb(70, 32, 41, 56),
+                BlurRadius = 22,
+                ShadowDepth = 7,
+                Opacity = 0.35
+            }
+        };
+        var panel = new Grid();
+        panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        panel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(14) });
+        panel.RowDefinitions.Add(new RowDefinition());
+        panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        var header = new Grid();
+        header.ColumnDefinitions.Add(new ColumnDefinition());
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        header.MouseLeftButtonDown += (_, e) => { if (e.LeftButton == MouseButtonState.Pressed) DragMove(); };
+        header.Children.Add(new TextBlock
+        {
+            Text = title,
+            FontSize = 16,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(32, 41, 56)),
+            VerticalAlignment = System.Windows.VerticalAlignment.Center
+        });
+        var close = new WpfButton
+        {
+            Content = "×",
+            Width = 28,
+            Height = 28,
+            Padding = new Thickness(0),
+            FontSize = 20,
+            FontWeight = FontWeights.Light,
+            ToolTip = "关闭",
+            Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(114, 128, 150)),
+            Background = System.Windows.Media.Brushes.Transparent
+        };
+        close.Click += (_, _) => { DialogResult = false; Close(); };
+        Grid.SetColumn(close, 1);
+        header.Children.Add(close);
+        panel.Children.Add(header);
+
+        var inputShell = new Border
+        {
+            Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(248, 250, 252)),
+            BorderBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(200, 210, 224)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(1)
+        };
         _box = new System.Windows.Controls.TextBox
         {
             Text = value,
-            FontSize = 14,
-            Padding = new Thickness(10, 8, 10, 8),
-            MinHeight = multiline ? 150 : 42,
+            FontSize = 14.5,
+            Padding = new Thickness(12, 9, 12, 9),
+            MinHeight = multiline ? 164 : 44,
             AcceptsReturn = multiline,
             TextWrapping = multiline ? TextWrapping.Wrap : TextWrapping.NoWrap,
             VerticalScrollBarVisibility = multiline ? ScrollBarVisibility.Auto : ScrollBarVisibility.Hidden,
-            VerticalContentAlignment = multiline ? VerticalAlignment.Top : VerticalAlignment.Center
+            VerticalContentAlignment = multiline ? VerticalAlignment.Top : VerticalAlignment.Center,
+            BorderThickness = new Thickness(0),
+            Background = System.Windows.Media.Brushes.Transparent,
+            Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(32, 41, 56))
         };
+        _box.GotKeyboardFocus += (_, _) => inputShell.BorderBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(14, 116, 144));
+        _box.LostKeyboardFocus += (_, _) => inputShell.BorderBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(200, 210, 224));
         if (!string.IsNullOrEmpty(placeholder) && string.IsNullOrEmpty(value))
         {
-            _box.Text = placeholder; _box.Foreground = System.Windows.Media.Brushes.Gray;
-            _box.GotFocus += (_, _) => { if (_box.Text == _placeholder) { _box.Clear(); _box.Foreground = System.Windows.Media.Brushes.Black; } };
-            _box.LostFocus += (_, _) => { if (string.IsNullOrWhiteSpace(_box.Text)) { _box.Text = _placeholder; _box.Foreground = System.Windows.Media.Brushes.Gray; } };
+            _box.Text = placeholder;
+            _box.Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(114, 128, 150));
+            _box.GotFocus += (_, _) => { if (_box.Text == _placeholder) { _box.Clear(); _box.Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(32, 41, 56)); } };
+            _box.LostFocus += (_, _) => { if (string.IsNullOrWhiteSpace(_box.Text)) { _box.Text = _placeholder; _box.Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(114, 128, 150)); } };
         }
-        panel.Children.Add(_box);
-        var buttons = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal, HorizontalAlignment = System.Windows.HorizontalAlignment.Right, Margin = new Thickness(0, 18, 0, 0) };
-        var ok = new WpfButton { Content = "确定", IsDefault = true, Width = 82, Height = 34 };
+        inputShell.Child = _box;
+        Grid.SetRow(inputShell, 2);
+        panel.Children.Add(inputShell);
+        var buttons = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal, HorizontalAlignment = System.Windows.HorizontalAlignment.Right, Margin = new Thickness(0, 16, 0, 0) };
+        var ok = new WpfButton
+        {
+            Content = "确定",
+            IsDefault = true,
+            Width = 82,
+            Height = 36,
+            Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(14, 116, 144)),
+            Foreground = System.Windows.Media.Brushes.White
+        };
         ok.Click += (_, _) => { if (_box.Text == _placeholder) _box.Clear(); DialogResult = true; Close(); };
-        var cancel = new WpfButton { Content = "取消", IsCancel = true, Width = 82, Height = 34 };
-        buttons.Children.Add(ok); buttons.Children.Add(cancel); panel.Children.Add(buttons); Content = panel;
+        var cancel = new WpfButton
+        {
+            Content = "取消",
+            IsCancel = true,
+            Width = 82,
+            Height = 36,
+            Background = System.Windows.Media.Brushes.Transparent,
+            BorderBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(200, 210, 224)),
+            BorderThickness = new Thickness(1)
+        };
+        buttons.Children.Add(cancel);
+        buttons.Children.Add(ok);
+        Grid.SetRow(buttons, 3);
+        panel.Children.Add(buttons);
+        dialogSurface.Child = panel;
+        Content = dialogSurface;
+        ContentRendered += (_, _) => Dispatcher.BeginInvoke(() =>
+        {
+            _box.Focus();
+            Keyboard.Focus(_box);
+            if (!string.IsNullOrEmpty(value) && value != _placeholder) _box.SelectAll();
+        }, DispatcherPriority.Input);
     }
 }

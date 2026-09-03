@@ -73,4 +73,26 @@ public sealed class StorageRepositoryTests
         }
         finally { if (Directory.Exists(path)) Directory.Delete(path, true); }
     }
+
+    [Fact]
+    public void ClearHistoryRemovesOnlyNonFavoritesAndReturnsCount()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "promptflow-test-" + Guid.NewGuid());
+        try
+        {
+            using var repo = new StorageRepository(path);
+            var favorite = repo.UpsertClipboard(new ClipboardItem { TextContent = "keep", DisplayText = "keep", CreatedAt = DateTime.UtcNow, LastCopiedAt = DateTime.UtcNow }, 10);
+            repo.SetFavorite(favorite.Id, true);
+            repo.UpsertClipboard(new ClipboardItem { TextContent = "remove-1", DisplayText = "remove-1", CreatedAt = DateTime.UtcNow, LastCopiedAt = DateTime.UtcNow }, 10);
+            repo.UpsertClipboard(new ClipboardItem { TextContent = "remove-2", DisplayText = "remove-2", CreatedAt = DateTime.UtcNow, LastCopiedAt = DateTime.UtcNow }, 10);
+
+            Assert.Equal(2, repo.ClearHistory());
+            var remaining = repo.GetHistory(10);
+            Assert.Single(remaining);
+            Assert.Equal("keep", remaining[0].TextContent);
+            Assert.True(remaining[0].IsFavorite);
+            Assert.Equal(0, repo.ClearHistory());
+        }
+        finally { if (Directory.Exists(path)) Directory.Delete(path, true); }
+    }
 }

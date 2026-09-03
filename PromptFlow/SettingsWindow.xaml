@@ -3,11 +3,13 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="PromptFlow 设置" Width="560" Height="560"
         WindowStartupLocation="CenterScreen" ResizeMode="NoResize"
-        Background="#F7F8FC" WindowStyle="None" AllowsTransparency="True">
-    <Border Background="#F7F8FC" BorderBrush="#172033" BorderThickness="1" CornerRadius="14" Padding="18">
+        Background="Transparent" WindowStyle="None" AllowsTransparency="True"
+        ShowInTaskbar="False">
+    <Border Margin="6" Background="#F7F8FC" BorderBrush="#172033" BorderThickness="1"
+            CornerRadius="14" Padding="18" ClipToBounds="True">
         <Grid>
             <Grid.RowDefinitions><RowDefinition Height="42"/><RowDefinition/><RowDefinition Height="52"/></Grid.RowDefinitions>
-            <Grid MouseLeftButtonDown="Header_MouseLeftButtonDown">
+            <Grid>
                 <TextBlock Text="设置" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource InkBrush}" VerticalAlignment="Center"/>
                 <Button Content="×" Width="34" Height="30" Padding="0" HorizontalAlignment="Right" Click="Close_Click"/>
             </Grid>

@@ -162,7 +162,25 @@ INSERT INTO schema_version(version) SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM sch
     public void MarkFolderUsed(long folderId) { using var cmd = _connection.CreateCommand(); cmd.CommandText = "UPDATE folders SET last_used_at=$now WHERE id=$id"; cmd.Parameters.AddWithValue("$now", DateTime.UtcNow.ToString("O")); cmd.Parameters.AddWithValue("$id", folderId); cmd.ExecuteNonQuery(); }
     public void RemoveFromFolder(long itemId, long folderId) { lock (_gate) { using var tx = _connection.BeginTransaction(); using (var cmd = _connection.CreateCommand()) { cmd.Transaction = tx; cmd.CommandText = "DELETE FROM folder_items WHERE folder_id=$folder AND item_id=$item"; cmd.Parameters.AddWithValue("$folder", folderId); cmd.Parameters.AddWithValue("$item", itemId); cmd.ExecuteNonQuery(); } using (var favorite = _connection.CreateCommand()) { favorite.Transaction = tx; favorite.CommandText = "UPDATE clipboard_items SET is_favorite=EXISTS(SELECT 1 FROM folder_items WHERE item_id=$item) WHERE id=$item"; favorite.Parameters.AddWithValue("$item", itemId); favorite.ExecuteNonQuery(); } tx.Commit(); } }
     public void UpdateItem(ClipboardItem item) { using var cmd = _connection.CreateCommand(); cmd.CommandText = "UPDATE clipboard_items SET text_content=$text,display_text=$display WHERE id=$id"; cmd.Parameters.AddWithValue("$text", (object?)item.TextContent ?? DBNull.Value); cmd.Parameters.AddWithValue("$display", item.DisplayText); cmd.Parameters.AddWithValue("$id", item.Id); cmd.ExecuteNonQuery(); }
-    public void ClearHistory() { lock (_gate) { using var tx = _connection.BeginTransaction(); using (var links = _connection.CreateCommand()) { links.Transaction = tx; links.CommandText = "DELETE FROM folder_items WHERE item_id IN (SELECT id FROM clipboard_items WHERE is_favorite=0)"; links.ExecuteNonQuery(); } using (var cmd = _connection.CreateCommand()) { cmd.Transaction = tx; cmd.CommandText = "DELETE FROM clipboard_items WHERE is_favorite=0"; cmd.ExecuteNonQuery(); } tx.Commit(); } }
+    public int ClearHistory()
+    {
+        lock (_gate)
+        {
+            using var tx = _connection.BeginTransaction();
+            using (var links = _connection.CreateCommand())
+            {
+                links.Transaction = tx;
+                links.CommandText = "DELETE FROM folder_items WHERE item_id IN (SELECT id FROM clipboard_items WHERE is_favorite=0)";
+                links.ExecuteNonQuery();
+            }
+            using var items = _connection.CreateCommand();
+            items.Transaction = tx;
+            items.CommandText = "DELETE FROM clipboard_items WHERE is_favorite=0";
+            var deletedCount = items.ExecuteNonQuery();
+            tx.Commit();
+            return deletedCount;
+        }
+    }
     public void ReorderFolders(IReadOnlyList<long> ids) { using var tx = _connection.BeginTransaction(); for (var i=0;i<ids.Count;i++) { using var cmd=_connection.CreateCommand(); cmd.Transaction=tx; cmd.CommandText="UPDATE folders SET sort_order=$order WHERE id=$id"; cmd.Parameters.AddWithValue("$order",i); cmd.Parameters.AddWithValue("$id",ids[i]); cmd.ExecuteNonQuery(); } tx.Commit(); }
     public void ReorderFolderItems(long folderId, IReadOnlyList<long> ids) { using var tx = _connection.BeginTransaction(); for (var i=0;i<ids.Count;i++) { using var cmd=_connection.CreateCommand(); cmd.Transaction=tx; cmd.CommandText="UPDATE folder_items SET sort_order=$order WHERE folder_id=$folder AND item_id=$id"; cmd.Parameters.AddWithValue("$order",ids.Count - 1 - i); cmd.Parameters.AddWithValue("$folder",folderId); cmd.Parameters.AddWithValue("$id",ids[i]); cmd.ExecuteNonQuery(); } tx.Commit(); }
     public List<string> GetExclusions() { using var cmd=_connection.CreateCommand(); cmd.CommandText="SELECT process_name FROM app_exclusions ORDER BY process_name"; using var r=cmd.ExecuteReader(); var list=new List<string>(); while(r.Read()) list.Add(r.GetString(0)); return list; }
