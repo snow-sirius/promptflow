@@ -2,6 +2,9 @@ bin/
 obj/
 turn/
 publish/
+dist/
 installer/output/
+TestResults/
+.vs/
 *.user
 *.suo
