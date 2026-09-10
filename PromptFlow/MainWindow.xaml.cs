@@ -22,6 +22,14 @@ namespace PromptFlow;
 
 public partial class MainWindow : Window
 {
+    public static readonly DependencyProperty ThumbnailsProperty = DependencyProperty.Register(
+        nameof(Thumbnails), typeof(ThumbnailService), typeof(MainWindow));
+    public ThumbnailService Thumbnails
+    {
+        get => (ThumbnailService)GetValue(ThumbnailsProperty);
+        private set => SetValue(ThumbnailsProperty, value);
+    }
+
     private readonly SettingsService _settings = new();
     private StorageRepository _repository;
     private ClipboardMonitor? _monitor;
@@ -43,6 +51,21 @@ public partial class MainWindow : Window
     private long _draggedFolder;
     private bool _suppressNextItemClick;
     private bool _suppressNextFolderClick;
+    private bool _pasteInProgress;
+    private bool _loadingMoreItems;
+    private int _pageGeneration;
+    private bool _restoringPageAnchor;
+    private bool _captureRefreshPending;
+    private bool _closed;
+    private string? _pageError;
+    private sealed record ViewAnchor(long ItemId, double Top);
+    private bool _itemPageLoaded;
+    private bool _hasMoreItems;
+    private DateTime? _historyBeforeTime;
+    private long? _historyBeforeId;
+    private int? _folderBeforeSortOrder;
+    private long? _folderBeforeItemId;
+    private const int ItemPageSize = 10;
     private Border? _dragHighlight;
     private System.Windows.Controls.Primitives.Popup? _dragPreviewPopup;
     private System.Windows.Controls.Primitives.Popup? _hoverPreviewPopup;
@@ -58,6 +81,7 @@ public partial class MainWindow : Window
         _actionBar = new ActionBarWindow(this);
         _actionBar.SourceInitialized += (_, _) => ConfigureAsNonActivatingWindow(_actionBar);
         _repository = new StorageRepository(_settings.Current.DataDirectory);
+        Thumbnails = new ThumbnailService(_repository, 128, 128);
         ItemList.ItemsSource = _items; FavoriteItemList.ItemsSource = _favoriteItems; FolderList.ItemsSource = _folders;
         SourceInitialized += (_, _) => InitializeNativeServices();
         PreviewMouseRightButtonDown += MainWindow_PreviewMouseRightButtonDown;
@@ -82,7 +106,7 @@ public partial class MainWindow : Window
     private void StartMonitor()
     {
         _monitor = new ClipboardMonitor(_repository, _settings);
-        _monitor.ItemCaptured += (_, _) => Dispatcher.Invoke(RefreshItems);
+        _monitor.ItemCaptured += (_, _) => Dispatcher.BeginInvoke(new Action(OnClipboardCaptured));
         _monitor.Notice += (_, text) => { AppLog.Warn(text); StatusText.Text = text; };
     }
 
@@ -90,6 +114,7 @@ public partial class MainWindow : Window
     private void TogglePopup() { if (IsVisible || _actionBar.IsVisible) HideMenus(); else ShowPopup(); }
     public void ShowPopup()
     {
+        if (_captureRefreshPending && !IsVisible) RefreshItems();
         RememberTargetWindow();
         var cursor = Forms.Cursor.Position;
         var work = Forms.Screen.FromPoint(cursor).WorkingArea;
@@ -183,8 +208,26 @@ public partial class MainWindow : Window
 
     private async void PasteToTarget(ClipboardItem item, bool plainText)
     {
+        if (_pasteInProgress) return;
+        _pasteInProgress = true;
+        var requestedTarget = _targetWindow;
+        var requestedFocus = _targetFocusWindow;
         try
         {
+            // List rows are lightweight summaries. Fetch the payload only when the
+            // user actually asks to paste it.
+            if (item.ImagePng is null && item.HtmlContent is null && item.RtfContent is null && item.TextContent is null)
+            {
+                var repository = _repository;
+                var full = await Task.Run(() => repository.GetItem(item.Id));
+                if (full is null || !ReferenceEquals(repository, _repository))
+                {
+                    StatusText.Text = "该词条已不存在，请刷新后重试";
+                    return;
+                }
+                item = full;
+            }
+
             // A recent-folder click is handled by the non-activating action bar.
             // Re-read the foreground target when the cached handle is stale so
             // that opening a folder from the shortcut bar still pastes into the
@@ -193,7 +236,6 @@ public partial class MainWindow : Window
             var bar = new WindowInteropHelper(_actionBar).Handle;
             if (_targetWindow == IntPtr.Zero || !IsWindow(_targetWindow) || _targetWindow == own || _targetWindow == bar)
                 RememberTargetWindow();
-            _monitor?.IgnoreNextClipboardChange();
             if (!ClipboardMonitor.TryPaste(item, plainText, out var error))
             {
                 AppLog.Warn($"Paste command stopped because clipboard write failed. ItemId={item.Id}; Error={error}");
@@ -201,10 +243,11 @@ public partial class MainWindow : Window
                 return;
             }
 
-            var target = _targetWindow;
+            var target = requestedTarget != IntPtr.Zero && IsWindow(requestedTarget) ? requestedTarget : _targetWindow;
+            var focus = target == requestedTarget ? requestedFocus : _targetFocusWindow;
             HideMenus();
             AppLog.Info($"Starting paste delivery. ItemId={item.Id}; {DescribeWindow(target)}; Focus=0x{_targetFocusWindow.ToInt64():X}");
-            if (target == IntPtr.Zero || !await PasteAsync(target, _targetFocusWindow))
+            if (target == IntPtr.Zero || !await PasteAsync(target, focus))
             {
                 AppLog.Warn($"Paste keystroke was not delivered. ItemId={item.Id}; Target=0x{target.ToInt64():X}");
                 StatusText.Text = "粘贴未送达：请确认目标窗口未以管理员权限运行";
@@ -215,6 +258,7 @@ public partial class MainWindow : Window
             AppLog.Error($"Paste command failed. ItemId={item.Id}", ex);
             StatusText.Text = $"粘贴失败：{ex.Message}";
         }
+        finally { _pasteInProgress = false; }
     }
 
     private static async Task<bool> PasteAsync(IntPtr target, IntPtr targetFocus)
@@ -232,48 +276,220 @@ public partial class MainWindow : Window
         return sent;
     }
 
-    private void RefreshItems()
+    private void OnClipboardCaptured()
     {
-        _items.Clear(); _favoriteItems.Clear();
-        var folders = _repository.GetFolders();
-        if (_favoritesMode)
+        if (_closed) return;
+        var viewer = FindVisualChild<ScrollViewer>(ItemList);
+        // Do not discard loaded pages (or move a folder/browser) for an unrelated capture.
+        if (IsVisible && (_favoritesMode || _directFolderMode || _loadingMoreItems ||
+            (viewer is not null && viewer.ScrollableHeight - viewer.VerticalOffset > 2)))
         {
-            _folders.Clear(); foreach (var folder in folders) _folders.Add(folder);
-            if (_selectedFolder > 0) foreach (var item in _repository.GetFolderItems(_selectedFolder)) _favoriteItems.Add(item);
-            else if (folders.Count > 0) foreach (var item in _repository.GetFolderItems(folders[0].Id)) _favoriteItems.Add(item);
+            _captureRefreshPending = true;
+            StatusText.Text = "有新记录 · 当前浏览位置已保留";
+            return;
         }
-        else
-        {
-            IEnumerable<ClipboardItem> entries = _directFolderMode && _selectedFolder > 0
-                ? _repository.GetFolderItems(_selectedFolder).OrderBy(i => i.CreatedAt)
-                : _repository.GetHistory(_settings.Current.MaxHistoryItems);
-            foreach (var item in entries) _items.Add(item);
-        }
-        if (_favoritesMode && _selectedFolder > 0)
-        {
-            _suppressFolderSelection = true;
-            FolderList.SelectedItem = _folders.FirstOrDefault(f => f.Id == _selectedFolder);
-            _suppressFolderSelection = false;
-        }
-        _actionBar.RefreshFolders(folders);
+        RefreshItems();
+    }
+
+    private async void RefreshItems()
+    {
+        if (_closed) return;
+        var generation = ++_pageGeneration;
+        var repository = _repository;
+        _captureRefreshPending = false;
+        _pageError = null;
+        _restoringPageAnchor = false;
+        _hoverPreviewItem = null;
+        _hoverPreviewTimer?.Stop();
+        CloseHoverPreview();
+        _items.Clear();
+        _favoriteItems.Clear();
+        _historyBeforeTime = null;
+        _historyBeforeId = null;
+        _folderBeforeSortOrder = null;
+        _folderBeforeItemId = null;
+        _hasMoreItems = false;
+        _itemPageLoaded = false;
+        _loadingMoreItems = false;
+
         HistoryContent.Visibility = _favoritesMode ? Visibility.Collapsed : Visibility.Visible;
         FavoritesContent.Visibility = _favoritesMode ? Visibility.Visible : Visibility.Collapsed;
-        var visibleCount = _favoritesMode ? _favoriteItems.Count : _items.Count;
-        StatusText.Text = _settings.Current.MonitorEnabled ? $"监听中 · {visibleCount} 条" : "已暂停监听";
-
-        // Items are ordered for bottom-anchored browsing; wait for the refreshed
-        // containers to be generated before moving the viewport to the last row.
-        Dispatcher.BeginInvoke(new Action(() =>
+        _loadingMoreItems = true;
+        UpdatePagingStrip();
+        try
         {
-            if (_favoritesMode)
+            var folders = await Task.Run(repository.GetFolders);
+            if (generation != _pageGeneration || _closed) return;
+            _suppressFolderSelection = true;
+            try
             {
-                ScrollListToEnd(FavoriteItemList, _favoriteItems.Count > 0 ? _favoriteItems[^1] : null);
+                _folders.Clear();
+                if (_favoritesMode) foreach (var folder in folders) _folders.Add(folder);
+                if (_favoritesMode && !folders.Any(f => f.Id == _selectedFolder))
+                    _selectedFolder = folders.FirstOrDefault()?.Id ?? 0;
+                FolderList.SelectedItem = _folders.FirstOrDefault(f => f.Id == _selectedFolder);
             }
-            else if (_items.Count > 0)
+            finally { _suppressFolderSelection = false; }
+            _actionBar.RefreshFolders(folders);
+            _loadingMoreItems = false;
+            if (!_favoritesMode || _selectedFolder > 0) await LoadNextItemPageAsync();
+            else { _itemPageLoaded = true; UpdateItemStatus(); }
+        }
+        catch (Exception ex)
+        {
+            if (generation == _pageGeneration) SetPagingError(ex);
+        }
+        finally
+        {
+            if (generation == _pageGeneration)
             {
-                ScrollListToEnd(ItemList, _items[^1]);
+                _loadingMoreItems = false;
+                UpdatePagingStrip();
             }
-        }), DispatcherPriority.Background);
+        }
+    }
+
+    private async Task LoadNextItemPageAsync()
+    {
+        if (_closed || _loadingMoreItems || _restoringPageAnchor || (_itemPageLoaded && !_hasMoreItems)) return;
+        var generation = _pageGeneration;
+        var repository = _repository;
+        var folderMode = _directFolderMode || _favoritesMode;
+        var folderId = _selectedFolder;
+        var beforeTime = _historyBeforeTime;
+        var beforeId = _historyBeforeId ?? 0;
+        var beforeSort = _folderBeforeSortOrder;
+        var beforeFolderId = _folderBeforeItemId ?? 0;
+        var initial = !_itemPageLoaded;
+        var list = _favoritesMode ? FavoriteItemList : ItemList;
+        var target = _favoritesMode ? _favoriteItems : _items;
+        _loadingMoreItems = true;
+        _pageError = null;
+        UpdatePagingStrip();
+        try
+        {
+            var page = await Task.Run(() => folderMode
+                ? repository.GetFolderPage(folderId, ItemPageSize, beforeSort, beforeFolderId)
+                : repository.GetHistoryPage(ItemPageSize, beforeTime, beforeId));
+            if (generation != _pageGeneration || _closed || !ReferenceEquals(repository, _repository)) return;
+            // Capture NOW, not before I/O: the user may have scrolled during the query.
+            var anchor = initial ? null : CaptureViewAnchor(list);
+            _restoringPageAnchor = true;
+            var ids = target.Select(item => item.Id).ToHashSet();
+            var incoming = page.Items.Where(item => ids.Add(item.Id)).ToList();
+            if (!folderMode && !initial)
+            {
+                for (var index = incoming.Count - 1; index >= 0; index--) target.Insert(0, incoming[index]);
+            }
+            else foreach (var item in incoming) target.Add(item);
+            _itemPageLoaded = true;
+            _hasMoreItems = page.HasMore;
+            _historyBeforeTime = page.BeforeTime;
+            _historyBeforeId = page.BeforeId;
+            _folderBeforeSortOrder = page.BeforeSortOrder;
+            _folderBeforeItemId = page.BeforeId;
+            if (initial)
+            {
+                list.UpdateLayout();
+                var viewer = FindVisualChild<ScrollViewer>(list);
+                if (folderMode) viewer?.ScrollToTop();
+                else viewer?.ScrollToEnd();
+            }
+            else if (anchor is not null) RestoreViewAnchor(list, anchor);
+            // Flush queued layout/ScrollChanged while the reentrancy guard is held.
+            await Dispatcher.InvokeAsync(() => list.UpdateLayout(), DispatcherPriority.Loaded);
+            if (generation != _pageGeneration || _closed) return;
+            if (anchor is not null) RestoreViewAnchor(list, anchor);
+            await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Background);
+            if (generation == _pageGeneration) UpdateItemStatus();
+        }
+        catch (Exception ex)
+        {
+            if (generation == _pageGeneration && !_closed) SetPagingError(ex);
+        }
+        finally
+        {
+            // An obsolete query must never unlock or hide a newer query's state.
+            if (generation == _pageGeneration)
+            {
+                _restoringPageAnchor = false;
+                _loadingMoreItems = false;
+                UpdatePagingStrip();
+            }
+        }
+    }
+
+    private static ViewAnchor? CaptureViewAnchor(WpfListBox list)
+    {
+        var viewport = FindVisualChild<ScrollContentPresenter>(list);
+        if (viewport is null) return null;
+        ViewAnchor? first = null;
+        // Inspect only realized containers, not the entire loaded history.
+        var panel = FindVisualChild<VirtualizingStackPanel>(list);
+        if (panel is null) return null;
+        foreach (var row in panel.Children.OfType<ListBoxItem>())
+        {
+            if (row.DataContext is not ClipboardItem item || !row.IsVisible) continue;
+            var top = row.TranslatePoint(new WpfPoint(0, 0), viewport).Y;
+            if (top + row.ActualHeight <= 0 || top >= viewport.ActualHeight) continue;
+            if (first is null || top < first.Top) first = new ViewAnchor(item.Id, top);
+        }
+        return first;
+    }
+
+    private static void RestoreViewAnchor(WpfListBox list, ViewAnchor anchor)
+    {
+        var item = list.Items.OfType<ClipboardItem>().FirstOrDefault(item => item.Id == anchor.ItemId);
+        var viewer = FindVisualChild<ScrollViewer>(list);
+        var viewport = FindVisualChild<ScrollContentPresenter>(list);
+        if (item is null || viewer is null || viewport is null) return;
+        list.UpdateLayout();
+        if (list.ItemContainerGenerator.ContainerFromItem(item) is not ListBoxItem)
+        {
+            list.ScrollIntoView(item);
+            list.UpdateLayout();
+        }
+        // Measured item position, never estimated extent delta. Repeat after layout
+        // because the recycling panel may revise its virtualized extent estimate.
+        for (var pass = 0; pass < 3; pass++)
+        {
+            if (list.ItemContainerGenerator.ContainerFromItem(item) is not ListBoxItem row) break;
+            var delta = row.TranslatePoint(new WpfPoint(0, 0), viewport).Y - anchor.Top;
+            if (Math.Abs(delta) < 0.25) break;
+            viewer.ScrollToVerticalOffset(Math.Clamp(viewer.VerticalOffset + delta, 0, viewer.ScrollableHeight));
+            list.UpdateLayout();
+        }
+    }
+
+    private void SetPagingError(Exception ex)
+    {
+        AppLog.Error("Loading item page failed", ex);
+        _pageError = "加载失败 · 点击重试";
+        StatusText.Text = $"加载失败：{ex.Message}";
+    }
+
+    private void UpdatePagingStrip()
+    {
+        var visible = _loadingMoreItems || _pageError is not null;
+        HistoryPagingStrip.Visibility = !_favoritesMode && visible ? Visibility.Visible : Visibility.Collapsed;
+        HistoryPagingStrip.VerticalAlignment = _directFolderMode ? System.Windows.VerticalAlignment.Bottom : System.Windows.VerticalAlignment.Top;
+        FavoritePagingStrip.Visibility = _favoritesMode && visible ? Visibility.Visible : Visibility.Collapsed;
+        HistoryPagingButton.Content = FavoritePagingButton.Content = _pageError ?? "正在加载…";
+        HistoryPagingButton.IsEnabled = FavoritePagingButton.IsEnabled = !_loadingMoreItems;
+    }
+
+    private async void PagingRetry_Click(object sender, RoutedEventArgs e)
+    {
+        if (_loadingMoreItems) return;
+        if (!_itemPageLoaded) RefreshItems();
+        else await LoadNextItemPageAsync();
+    }
+
+    private void UpdateItemStatus()
+    {
+        var visibleCount = _favoritesMode ? _favoriteItems.Count : _items.Count;
+        StatusText.Text = _captureRefreshPending ? "有新记录 · 当前浏览位置已保留" :
+            _settings.Current.MonitorEnabled ? $"监听中 · {visibleCount} 条" : "已暂停监听";
     }
     private static void ScrollListToEnd(WpfListBox list, object? lastItem)
     {
@@ -541,6 +757,31 @@ public partial class MainWindow : Window
         if (viewer is null) return;
         viewer.ScrollToVerticalOffset(Math.Max(0, viewer.VerticalOffset - e.Delta / 3d));
         e.Handled = true;
+        // A wheel at an already reached edge produces no ScrollChanged event.
+        if (list == (_favoritesMode ? FavoriteItemList : ItemList))
+            RequestPageAtEdge(viewer, e.Delta > 0 ? -1 : 1);
+    }
+
+    private void ItemList_ScrollChanged(object sender, ScrollChangedEventArgs e)
+    {
+        if (_loadingMoreItems || _restoringPageAnchor || !_itemPageLoaded || !_hasMoreItems || e.OriginalSource is not ScrollViewer viewer || e.VerticalChange == 0 || e.ExtentHeightChange != 0 || e.ViewportHeightChange != 0) return;
+        var historyViewer = FindVisualChild<ScrollViewer>(ItemList);
+        var favoriteViewer = FindVisualChild<ScrollViewer>(FavoriteItemList);
+        var isHistory = ReferenceEquals(historyViewer, viewer);
+        var isFavorites = ReferenceEquals(favoriteViewer, viewer);
+        if (!isHistory && !isFavorites) return;
+
+        if (isFavorites != _favoritesMode) return;
+        RequestPageAtEdge(viewer, e.VerticalChange);
+    }
+
+    private void RequestPageAtEdge(ScrollViewer viewer, double direction)
+    {
+        if (_loadingMoreItems || _restoringPageAnchor || !_itemPageLoaded || !_hasMoreItems || _pageError is not null) return;
+        var prepend = !_favoritesMode && !_directFolderMode;
+        if (prepend ? viewer.VerticalOffset > 1 || direction >= 0
+                    : viewer.ScrollableHeight - viewer.VerticalOffset > 1 || direction <= 0) return;
+        _ = LoadNextItemPageAsync();
     }
 
     private void ItemList_DragOver(object sender, WpfDragEventArgs e) => SetDragEffect(e, typeof(ClipboardItem));
@@ -649,9 +890,31 @@ public partial class MainWindow : Window
         ScheduleHoverPreviewClose();
     }
 
-    private void ShowHoverPreview(ClipboardItem item, FrameworkElement target)
+    private async void ShowHoverPreview(ClipboardItem item, FrameworkElement target)
     {
         CloseHoverPreview();
+        ClipboardItem? previewItem;
+        System.Windows.Media.Imaging.BitmapSource? previewBitmap;
+        var repository = _repository;
+        try
+        {
+            var result = await Task.Run(() =>
+            {
+                var full = repository.GetItem(item.Id);
+                var bitmap = full?.ImagePng is { Length: > 0 } bytes ? CreateBitmap(bytes) : null;
+                return (full, bitmap);
+            });
+            previewItem = result.full;
+            previewBitmap = result.bitmap;
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("Loading hover preview failed", ex);
+            return;
+        }
+        if (previewItem is null || !ReferenceEquals(repository, _repository) ||
+            !ReferenceEquals(_hoverPreviewItem, item) || !ReferenceEquals(target.DataContext, item) || !IsVisible) return;
+
         var body = new System.Windows.Controls.Border
         {
             Width = 300,
@@ -664,9 +927,9 @@ public partial class MainWindow : Window
         };
         body.MouseEnter += (_, _) => _hoverPreviewTimer?.Stop();
         body.MouseLeave += (_, _) => ScheduleHoverPreviewClose();
-        if (item.ImagePng is { Length: > 0 } imageBytes)
+        if (previewItem.ImagePng is { Length: > 0 } imageBytes)
         {
-            var bitmap = CreateBitmap(imageBytes);
+            var bitmap = previewBitmap;
             body.Child = bitmap is not null ? new System.Windows.Controls.Image
             {
                 Source = bitmap, Width = 278, Height = 165,
@@ -688,7 +951,7 @@ public partial class MainWindow : Window
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
                 Content = new TextBlock
                 {
-                    Text = item.TextContent ?? item.DisplayText,
+                    Text = previewItem.TextContent ?? previewItem.DisplayText,
                     Foreground = System.Windows.Media.Brushes.White,
                     TextWrapping = TextWrapping.Wrap,
                     FontSize = 13
@@ -709,7 +972,7 @@ public partial class MainWindow : Window
     {
         try
         {
-            var image = PngImageCodec.Decode(bytes, out var repairedTransparentAlpha);
+            var image = PngImageCodec.DecodeThumbnail(bytes, 600, 360, out var repairedTransparentAlpha);
             AppLog.Info($"Hover preview PNG decoded. Bytes={bytes.Length}; Width={image.PixelWidth}; Height={image.PixelHeight}; PixelFormat={image.Format}; AlphaRepaired={repairedTransparentAlpha}");
             return image;
         }
@@ -751,8 +1014,8 @@ public partial class MainWindow : Window
         if (e.OriginalSource is DependencyObject source && FindParent<ListBoxItem>(source) is ListBoxItem row && row.DataContext is ClipboardItem item)
         {
             var menu = new ContextMenu(); var paste = new MenuItem { Header = "粘贴原格式" }; paste.Click += (_, _) => PasteToTarget(item, false); var plain = new MenuItem { Header = "粘贴为纯文本" }; plain.Click += (_, _) => PasteToTarget(item, true); menu.Items.Add(paste); menu.Items.Add(plain); menu.Items.Add(new Separator());
-            if (item.ImagePng is null) { var edit = new MenuItem { Header = "编辑词条内容" }; edit.Click += (_, _) => EditItem(item); menu.Items.Add(edit); }
-            var display = new MenuItem { Header = "编辑展示文字" }; display.Click += (_, _) => { var text=Prompt("展示文字", item.DisplayText, this, false); if(text is not null){item.DisplayText=text;_repository.UpdateItem(item);RefreshItems();} }; var delete = new MenuItem { Header = "删除词条" }; delete.Click += (_, _) => { _repository.DeleteItem(item.Id); RefreshItems(); }; menu.Items.Add(display); menu.Items.Add(new Separator()); menu.Items.Add(delete); OpenContextMenu(menu); e.Handled=true;
+            if (!item.HasImage) { var edit = new MenuItem { Header = "编辑词条内容" }; edit.Click += (_, _) => EditItem(item); menu.Items.Add(edit); }
+            var display = new MenuItem { Header = "编辑展示文字" }; display.Click += (_, _) => { var text=Prompt("展示文字", item.DisplayText, this, false); if(text is not null){_repository.UpdateDisplayText(item.Id,text);RefreshItems();} }; var delete = new MenuItem { Header = "删除词条" }; delete.Click += (_, _) => { _repository.DeleteItem(item.Id); RefreshItems(); }; menu.Items.Add(display); menu.Items.Add(new Separator()); menu.Items.Add(delete); OpenContextMenu(menu); e.Handled=true;
         }
         else if (e.OriginalSource is DependencyObject folderSource && FindParent<ListBoxItem>(folderSource) is ListBoxItem folderRow && folderRow.DataContext is Folder folder)
         { var menu = new ContextMenu(); var lockItem=new MenuItem{Header=folder.IsLocked?"解锁收藏夹":"锁定收藏夹"}; lockItem.Click+=(_,_)=>{_repository.SetFolderLock(folder.Id,!folder.IsLocked);RefreshItems();}; var delete = new MenuItem { Header = "删除收藏夹" }; delete.Click += (_, _) => { _repository.DeleteFolder(folder.Id); if (_selectedFolder == folder.Id) _selectedFolder = 0; RefreshItems(); }; menu.Items.Add(lockItem); menu.Items.Add(new Separator()); menu.Items.Add(delete); OpenContextMenu(menu); e.Handled=true; }
@@ -780,7 +1043,22 @@ public partial class MainWindow : Window
         return null;
     }
 
-    private void EditItem(ClipboardItem item){var text=Prompt("编辑词条内容",item.TextContent??item.DisplayText,this,true);if(text is not null){item.TextContent=text;item.DisplayText=text.ReplaceLineEndings(" ").Trim();_repository.UpdateItem(item);RefreshItems();}}
+    private async void EditItem(ClipboardItem item)
+    {
+        try
+        {
+            var repository = _repository;
+            var full = await Task.Run(() => repository.GetItem(item.Id));
+            if (full is null || !ReferenceEquals(repository, _repository)) return;
+            var text = Prompt("编辑词条内容", full.TextContent ?? full.DisplayText, this, true);
+            if (text is null) return;
+            full.TextContent = text;
+            full.DisplayText = text.ReplaceLineEndings(" ").Trim();
+            repository.UpdateItem(full);
+            RefreshItems();
+        }
+        catch (Exception ex) { ShowOperationError("编辑词条失败", ex); }
+    }
     private static string? Prompt(string title, string value, Window? owner = null, bool multiline = false, string? placeholder = null)
     {
         var dialog = new InputDialog(title, value, multiline, placeholder)
@@ -826,9 +1104,9 @@ public partial class MainWindow : Window
         }
         var pathChanged = !string.Equals(next.DataDirectory, _settings.Current.DataDirectory, StringComparison.OrdinalIgnoreCase);
         Directory.CreateDirectory(next.DataDirectory);
-        if (pathChanged) { var oldDb=Path.Combine(_settings.Current.DataDirectory,"promptflow.db"); var newDb=Path.Combine(next.DataDirectory,"promptflow.db"); if (File.Exists(oldDb)&&!File.Exists(newDb)) File.Copy(oldDb,newDb); }
+        if (pathChanged) { var oldDb=Path.Combine(_settings.Current.DataDirectory,"promptflow.db"); var newDb=Path.Combine(next.DataDirectory,"promptflow.db"); if (File.Exists(oldDb)&&!File.Exists(newDb)) _repository.BackupTo(newDb); }
         _settings.Save(next);
-        if (pathChanged) { _monitor?.Dispose(); _repository.Dispose(); _repository=new StorageRepository(next.DataDirectory); StartMonitor(); }
+        if (pathChanged) { ++_pageGeneration; _monitor?.Dispose(); Thumbnails.Dispose(); _repository.Dispose(); _repository=new StorageRepository(next.DataDirectory); Thumbnails = new ThumbnailService(_repository, 128, 128); StartMonitor(); }
         _repository.SetExclusions(exclusions); _monitor?.RefreshSettings(); if (_tray is not null) _tray.MonitorEnabled=next.MonitorEnabled; RefreshItems();
     }
     private void LoadSettingsFields() { }
@@ -840,7 +1118,7 @@ public partial class MainWindow : Window
         RefreshItems();
         return deletedCount;
     }
-    protected override void OnClosed(EventArgs e){CloseHoverPreview();if(_outsideMouseHook!=IntPtr.Zero)UnhookWindowsHookEx(_outsideMouseHook);_actionBar.Close();_monitor?.Dispose();_hotkey?.Dispose();_tray?.Dispose();_repository.Dispose();base.OnClosed(e);}
+    protected override void OnClosed(EventArgs e){_closed = true; ++_pageGeneration; Thumbnails.Dispose(); CloseHoverPreview();if(_outsideMouseHook!=IntPtr.Zero)UnhookWindowsHookEx(_outsideMouseHook);_actionBar.Close();_monitor?.Dispose();_hotkey?.Dispose();_tray?.Dispose();_repository.Dispose();base.OnClosed(e);}
 
     internal void SelectHistoryFromBar() => History_Click(this, new RoutedEventArgs());
     internal void SelectFavoritesFromBar() => Favorites_Click(this, new RoutedEventArgs());

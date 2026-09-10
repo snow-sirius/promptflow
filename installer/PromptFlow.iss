@@ -1,7 +1,10 @@
 #define MyAppName "PromptFlow"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.0.3"
 #define MyAppPublisher "PromptFlow"
 #define MyAppExeName "PromptFlow.exe"
+#ifndef PublishDir
+  #define PublishDir "..\publish"
+#endif
 
 [Setup]
 AppId={{A7D69B9B-72D5-4F0C-8C15-1D50F16F0C5D}
@@ -11,7 +14,7 @@ AppPublisher={#MyAppPublisher}
 DefaultDirName={localappdata}\PromptFlow
 DefaultGroupName={#MyAppName}
 OutputDir=output
-OutputBaseFilename=PromptFlow-Setup
+OutputBaseFilename=PromptFlow-Setup-{#MyAppVersion}-win-x64
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -24,7 +27,7 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; Flags: unchecked
 Name: "cleandata"; Description: "卸载时删除用户数据"; Flags: unchecked
 
 [Files]
-Source: "..\publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#PublishDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\PromptFlow"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\Assets\PromptFlow.ico"
