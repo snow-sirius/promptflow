@@ -7,7 +7,6 @@ using System.IO;
 using System.Runtime.InteropServices;
 using WpfClipboard = System.Windows.Clipboard;
 using WpfTextDataFormat = System.Windows.TextDataFormat;
-using WpfDataObject = System.Windows.DataObject;
 using System.Diagnostics;
 using System.Text;
 using System.Security.Cryptography;
@@ -27,6 +26,7 @@ public sealed class ClipboardMonitor : IDisposable
     private uint _lastClipboardSequence;
     private bool _hasClipboardSequence;
     private static long _selfWriteSequence;
+    private static int _writeInProgress;
     private readonly Dispatcher _dispatcher;
     private readonly object _lifecycle = new();
     private readonly AutoResetEvent _wake = new(false);
@@ -53,16 +53,23 @@ public sealed class ClipboardMonitor : IDisposable
     }
 
     public void RefreshSettings() => _timer.IsEnabled = _settings.Current.MonitorEnabled;
-    // Compatibility for callers arming this before TryPaste: successful writes now
+    // Compatibility for callers arming this before a write: successful writes now
     // record an exact sequence themselves. Failed writes never hide unrelated copies.
     public void IgnoreNextClipboardChange() { }
+
+    // A clipboard write touches the sequence several times (EmptyClipboard plus one
+    // SetClipboardData per format). Reading during that window would capture a
+    // half-published snapshot, so the monitor stands down while ClipboardWriter runs.
+    internal static void BeginWrite() => Interlocked.Increment(ref _writeInProgress);
+    internal static void EndWrite() => Interlocked.Decrement(ref _writeInProgress);
+    internal static bool IsWriting => Volatile.Read(ref _writeInProgress) != 0;
 
     private void Poll()
     {
         if (!Monitor.TryEnter(_lifecycle)) return;
         try
         {
-            if (_disposed || !_settings.Current.MonitorEnabled || Volatile.Read(ref _inFlight) != 0) return;
+            if (_disposed || IsWriting || !_settings.Current.MonitorEnabled || Volatile.Read(ref _inFlight) != 0) return;
             var sequence = GetClipboardSequenceNumber();
             if (sequence != 0 && (sequence == (uint)Interlocked.Read(ref _selfWriteSequence) ||
                 (_hasClipboardSequence && sequence == _lastClipboardSequence))) return;
@@ -82,6 +89,12 @@ public sealed class ClipboardMonitor : IDisposable
             {
                 _wake.WaitOne();
                 if (_disposed) return;
+                if (IsWriting)
+                {
+                    // The write is publishing formats; do not snapshot a half-built clipboard.
+                    Interlocked.Exchange(ref _inFlight, 0);
+                    continue;
+                }
                 Snapshot? snapshot = null;
                 Exception? failure = null;
                 try
@@ -344,52 +357,6 @@ public sealed class ClipboardMonitor : IDisposable
         catch { return false; }
     }
 
-    public static bool TryPaste(ClipboardItem item, bool plainText, out string? error)
-    {
-        try
-        {
-            var imagePng = item.ImagePng;
-            var repairedTransparentAlpha = false;
-            BitmapSource? pasteImage = null;
-            if (!plainText && imagePng is { Length: > 0 })
-            {
-                pasteImage = PngImageCodec.Decode(imagePng, out repairedTransparentAlpha);
-                if (repairedTransparentAlpha) imagePng = PngImageCodec.Encode(pasteImage, out _);
-                if (repairedTransparentAlpha)
-                    AppLog.Warn($"Repaired all-zero alpha channel from historical PNG before paste. ItemId={item.Id}; Bytes={imagePng.Length}");
-            }
-            AppLog.Info($"Preparing paste. ItemId={item.Id}; PlainText={plainText}; ImageBytes={imagePng?.Length ?? 0}; AlphaRepaired={repairedTransparentAlpha}");
-            if (plainText || item.ImagePng is null && item.HtmlContent is null && item.RtfContent is null)
-            {
-                WpfClipboard.SetText(item.TextContent ?? item.DisplayText);
-                RecordSelfWriteSequence();
-                error = null;
-                return true;
-            }
-
-            var data = new WpfDataObject();
-            if (item.TextContent is not null) data.SetText(item.TextContent, WpfTextDataFormat.UnicodeText);
-            if (item.HtmlContent is not null) data.SetText(item.HtmlContent, WpfTextDataFormat.Html);
-            if (item.RtfContent is not null) data.SetText(item.RtfContent, WpfTextDataFormat.Rtf);
-            if (imagePng is not null)
-            {
-                if (pasteImage is not null) data.SetImage(pasteImage);
-            }
-            WpfClipboard.SetDataObject(data, true);
-            RecordSelfWriteSequence();
-            if (imagePng is not null) TryPublishNativePng(imagePng);
-            AppLog.Info($"Clipboard write succeeded. ItemId={item.Id}; WpfFormats={DescribeFormats(WpfClipboard.GetDataObject())}; NativeFormats={DescribeNativeClipboardFormats()}");
-            error = null;
-            return true;
-        }
-        catch (Exception ex)
-        {
-            AppLog.Error($"Clipboard write failed. ItemId={item.Id}", ex);
-            error = ex.Message;
-            return false;
-        }
-    }
-
     public void Dispose()
     {
         lock (_lifecycle)
@@ -404,105 +371,14 @@ public sealed class ClipboardMonitor : IDisposable
         // The worker owns no repository access; the lifecycle gate drains persistence.
     }
 
-    private static void RecordSelfWriteSequence()
+    internal static void RecordSelfWriteSequence()
     {
-        // Another application may win immediately after SetDataObject returns.
+        // Another application may win immediately after the write returns.
         // Only suppress a stable sequence whose clipboard owner is this process.
         var sequence = GetClipboardSequenceNumber();
         GetWindowThreadProcessId(GetClipboardOwner(), out var owner);
         if (sequence != 0 && owner == (uint)Environment.ProcessId && sequence == GetClipboardSequenceNumber())
             Interlocked.Exchange(ref _selfWriteSequence, sequence);
-    }
-
-    private static void TryPublishNativePng(byte[] png)
-    {
-        // DataObject marshals arbitrary Stream values as OLE data. Some native
-        // targets then receive the stream object rather than a PNG byte buffer.
-        // Put the registered formats on the clipboard as HGLOBAL memory after
-        // WPF has published its standard CF_DIB image format.
-        if (!OpenClipboard(IntPtr.Zero))
-        {
-            AppLog.Warn($"Could not append native PNG formats. Win32Error={Marshal.GetLastWin32Error()}");
-            return;
-        }
-        try
-        {
-            GetWindowThreadProcessId(GetClipboardOwner(), out var owner);
-            if (owner != (uint)Environment.ProcessId) return;
-            var pngFormat = RegisterClipboardFormat("PNG");
-            var mimeFormat = RegisterClipboardFormat("image/png");
-            try { SetClipboardBytes(pngFormat, png); AppLog.Info($"Published native PNG format. Id={pngFormat}; Bytes={png.Length}"); }
-            catch (Exception ex) { AppLog.Error("Failed to publish native PNG format", ex); }
-            try { SetClipboardBytes(mimeFormat, png); AppLog.Info($"Published native image/png format. Id={mimeFormat}; Bytes={png.Length}"); }
-            catch (Exception ex) { AppLog.Error("Failed to publish native image/png format", ex); }
-            RecordSelfWriteSequence();
-            AppLog.Info($"Native clipboard formats after PNG publish. {DescribeNativeClipboardFormatsUnsafe()}");
-        }
-        finally { CloseClipboard(); }
-    }
-
-    private static void SetClipboardBytes(uint format, byte[] bytes)
-    {
-        if (format == 0) throw new ExternalException("无法注册 PNG 剪贴板格式", Marshal.GetLastWin32Error());
-        var handle = GlobalAlloc(GmemMoveable, (UIntPtr)bytes.Length);
-        if (handle == IntPtr.Zero) throw new OutOfMemoryException("无法为 PNG 剪贴板数据分配内存");
-        try
-        {
-            var pointer = GlobalLock(handle);
-            if (pointer == IntPtr.Zero) throw new ExternalException("无法写入 PNG 剪贴板数据", Marshal.GetLastWin32Error());
-            try { Marshal.Copy(bytes, 0, pointer, bytes.Length); }
-            finally { GlobalUnlock(handle); }
-            if (SetClipboardData(format, handle) == IntPtr.Zero)
-                throw new ExternalException("无法发布 PNG 剪贴板数据", Marshal.GetLastWin32Error());
-            handle = IntPtr.Zero; // Clipboard now owns the HGLOBAL.
-        }
-        finally
-        {
-            if (handle != IntPtr.Zero) GlobalFree(handle);
-        }
-    }
-
-    private static string DescribeFormats(System.Windows.IDataObject? data)
-    {
-        if (data is null) return "<none>";
-        try { return string.Join(",", data.GetFormats(false).OrderBy(x => x, StringComparer.Ordinal)); }
-        catch (Exception ex) { return $"<unavailable:{ex.GetType().Name}>"; }
-    }
-
-    private static string DescribeNativeClipboardFormats()
-    {
-        if (!OpenClipboard(IntPtr.Zero)) return $"<unavailable:Win32Error={Marshal.GetLastWin32Error()}>";
-        try { return DescribeNativeClipboardFormatsUnsafe(); }
-        finally { CloseClipboard(); }
-    }
-
-    private static string DescribeNativeClipboardFormatsUnsafe()
-    {
-        var formats = new List<string>();
-        uint format = 0;
-        while ((format = EnumClipboardFormats(format)) != 0)
-        {
-            formats.Add(DescribeNativeClipboardFormat(format));
-        }
-        var error = Marshal.GetLastWin32Error();
-        return error == 0 ? string.Join(",", formats) : $"{string.Join(",", formats)}; EnumerationError={error}";
-    }
-
-    private static string DescribeNativeClipboardFormat(uint format)
-    {
-        var knownName = format switch
-        {
-            1 => "CF_TEXT",
-            2 => "CF_BITMAP",
-            8 => "CF_DIB",
-            13 => "CF_UNICODETEXT",
-            17 => "CF_DIBV5",
-            _ => null
-        };
-        if (knownName is not null) return $"{knownName}({format})";
-        var name = new StringBuilder(256);
-        var length = GetClipboardFormatName(format, name, name.Capacity);
-        return length > 0 ? $"{name}({format})" : $"Format{format}";
     }
 
     [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
@@ -512,14 +388,6 @@ public sealed class ClipboardMonitor : IDisposable
     [DllImport("user32.dll")] private static extern bool CloseClipboard();
     [DllImport("user32.dll")] private static extern IntPtr GetClipboardOwner();
     [DllImport("user32.dll")] private static extern IntPtr GetClipboardData(uint uFormat);
-    [DllImport("user32.dll", SetLastError = true)] private static extern uint RegisterClipboardFormat(string lpszFormat);
-    [DllImport("user32.dll", SetLastError = true)] private static extern IntPtr SetClipboardData(uint uFormat, IntPtr hMem);
-    [DllImport("user32.dll", SetLastError = true)] private static extern uint EnumClipboardFormats(uint format);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClipboardFormatName(uint format, StringBuilder formatName, int maxCount);
     [DllImport("kernel32.dll")] private static extern IntPtr GlobalLock(IntPtr hMem);
     [DllImport("kernel32.dll")] private static extern bool GlobalUnlock(IntPtr hMem);
-    [DllImport("kernel32.dll", SetLastError = true)] private static extern IntPtr GlobalAlloc(uint uFlags, UIntPtr dwBytes);
-    [DllImport("kernel32.dll")] private static extern IntPtr GlobalFree(IntPtr hMem);
-
-    private const uint GmemMoveable = 0x0002;
 }

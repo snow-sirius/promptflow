@@ -10,6 +10,7 @@ PromptFlow 是一款面向 Windows 的本地剪贴板助手。它会在后台保
 - 通过全局快捷键唤出历史面板，选择内容后粘贴回此前使用的应用。
 - 用文件夹收藏、整理常用内容；支持拖放排序、快捷槽和锁定。
 - 支持图片缩略图、悬停预览、托盘菜单和每个应用的剪贴板监听排除列表。
+- 右键词条可直接复制回系统剪贴板；写入会等待远控等程序释放被占用的剪贴板。
 - 数据默认保存在 `%LOCALAPPDATA%\PromptFlow\data`，可在设置中改到其他目录。
 
 ## 界面
@@ -65,6 +66,7 @@ PromptFlow is a local clipboard assistant for Windows. It keeps text, rich text,
 - Opens a history panel from a global shortcut and pastes an entry back into the previously active application.
 - Organizes frequent entries in folders with drag-and-drop ordering, shortcut slots, and locks.
 - Includes image thumbnails, hover previews, a tray menu, and per-application clipboard exclusions.
+- Right-click an entry to copy it back to the system clipboard; writes wait for contention from remote-control or clipboard-sync tools to clear.
 - Stores data locally at `%LOCALAPPDATA%\PromptFlow\data` by default; the location is configurable in Settings.
 
 ### Install and use

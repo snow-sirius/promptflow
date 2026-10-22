@@ -216,17 +216,13 @@ public partial class MainWindow : Window
         {
             // List rows are lightweight summaries. Fetch the payload only when the
             // user actually asks to paste it.
-            if (item.ImagePng is null && item.HtmlContent is null && item.RtfContent is null && item.TextContent is null)
+            var payload = await LoadPayloadAsync(item);
+            if (payload is null)
             {
-                var repository = _repository;
-                var full = await Task.Run(() => repository.GetItem(item.Id));
-                if (full is null || !ReferenceEquals(repository, _repository))
-                {
-                    StatusText.Text = "该词条已不存在，请刷新后重试";
-                    return;
-                }
-                item = full;
+                StatusText.Text = "该词条已不存在，请刷新后重试";
+                return;
             }
+            item = payload;
 
             // A recent-folder click is handled by the non-activating action bar.
             // Re-read the foreground target when the cached handle is stale so
@@ -236,10 +232,11 @@ public partial class MainWindow : Window
             var bar = new WindowInteropHelper(_actionBar).Handle;
             if (_targetWindow == IntPtr.Zero || !IsWindow(_targetWindow) || _targetWindow == own || _targetWindow == bar)
                 RememberTargetWindow();
-            if (!ClipboardMonitor.TryPaste(item, plainText, out var error))
+            var write = await ClipboardWriter.WriteAsync(item, plainText, TimeSpan.FromMilliseconds(2000));
+            if (!write.Success)
             {
-                AppLog.Warn($"Paste command stopped because clipboard write failed. ItemId={item.Id}; Error={error}");
-                StatusText.Text = $"无法写入剪贴板：{error}";
+                AppLog.Warn($"Paste command stopped because clipboard write failed. ItemId={item.Id}; Attempts={write.Attempts}; Error={write.Error}; Holder={ClipboardWriter.DescribeClipboardHolder()}");
+                StatusText.Text = "当前剪贴板被远控软件等占用，请右键复制词条后手动粘贴";
                 return;
             }
 
@@ -257,6 +254,54 @@ public partial class MainWindow : Window
         {
             AppLog.Error($"Paste command failed. ItemId={item.Id}", ex);
             StatusText.Text = $"粘贴失败：{ex.Message}";
+        }
+        finally { _pasteInProgress = false; }
+    }
+
+    private async Task<ClipboardItem?> LoadPayloadAsync(ClipboardItem item)
+    {
+        if (item.ImagePng is not null || item.HtmlContent is not null || item.RtfContent is not null || item.TextContent is not null)
+            return item;
+        var repository = _repository;
+        var full = await Task.Run(() => repository.GetItem(item.Id));
+        return full is null || !ReferenceEquals(repository, _repository) ? null : full;
+    }
+
+    /// <summary>
+    /// Copies an item back to the system clipboard without injecting Ctrl+V, so the
+    /// user can paste manually. The writer publishes every format in one clipboard
+    /// session and retries transient contention (remote-control clipboard sync), so a
+    /// right-click copy is a dependable fallback when automatic paste is blocked.
+    /// </summary>
+    private async void CopyItemToClipboard(ClipboardItem item)
+    {
+        if (_pasteInProgress) return;
+        _pasteInProgress = true;
+        try
+        {
+            var payload = await LoadPayloadAsync(item);
+            if (payload is null)
+            {
+                StatusText.Text = "该词条已不存在，请刷新后重试";
+                return;
+            }
+
+            StatusText.Text = "正在复制…";
+            var write = await ClipboardWriter.WriteAsync(payload, plainText: false, TimeSpan.FromMilliseconds(4000));
+            if (write.Success)
+            {
+                AppLog.Info($"Copied item to clipboard. ItemId={payload.Id}; Attempts={write.Attempts}");
+                StatusText.Text = "已复制，切换到目标窗口后 Ctrl+V 粘贴";
+                return;
+            }
+
+            AppLog.Warn($"Copy to clipboard gave up. ItemId={payload.Id}; Attempts={write.Attempts}; Error={write.Error}; Holder={ClipboardWriter.DescribeClipboardHolder()}");
+            StatusText.Text = "复制失败：剪贴板被其他程序占用，请稍后重试";
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error($"Copy command failed. ItemId={item.Id}", ex);
+            StatusText.Text = $"复制失败：{ex.Message}";
         }
         finally { _pasteInProgress = false; }
     }
@@ -1013,7 +1058,18 @@ public partial class MainWindow : Window
     {
         if (e.OriginalSource is DependencyObject source && FindParent<ListBoxItem>(source) is ListBoxItem row && row.DataContext is ClipboardItem item)
         {
-            var menu = new ContextMenu(); var paste = new MenuItem { Header = "粘贴原格式" }; paste.Click += (_, _) => PasteToTarget(item, false); var plain = new MenuItem { Header = "粘贴为纯文本" }; plain.Click += (_, _) => PasteToTarget(item, true); menu.Items.Add(paste); menu.Items.Add(plain); menu.Items.Add(new Separator());
+            var menu = new ContextMenu();
+            var copy = new MenuItem { Header = "复制" };
+            copy.Click += (_, _) => CopyItemToClipboard(item);
+            var paste = new MenuItem { Header = "粘贴原格式" };
+            paste.Click += (_, _) => PasteToTarget(item, false);
+            var plain = new MenuItem { Header = "粘贴为纯文本" };
+            plain.Click += (_, _) => PasteToTarget(item, true);
+            menu.Items.Add(copy);
+            menu.Items.Add(new Separator());
+            menu.Items.Add(paste);
+            menu.Items.Add(plain);
+            menu.Items.Add(new Separator());
             if (!item.HasImage) { var edit = new MenuItem { Header = "编辑词条内容" }; edit.Click += (_, _) => EditItem(item); menu.Items.Add(edit); }
             var display = new MenuItem { Header = "编辑展示文字" }; display.Click += (_, _) => { var text=Prompt("展示文字", item.DisplayText, this, false); if(text is not null){_repository.UpdateDisplayText(item.Id,text);RefreshItems();} }; var delete = new MenuItem { Header = "删除词条" }; delete.Click += (_, _) => { _repository.DeleteItem(item.Id); RefreshItems(); }; menu.Items.Add(display); menu.Items.Add(new Separator()); menu.Items.Add(delete); OpenContextMenu(menu); e.Handled=true;
         }

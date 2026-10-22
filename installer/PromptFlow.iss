@@ -1,5 +1,5 @@
 #define MyAppName "PromptFlow"
-#define MyAppVersion "1.0.3"
+#define MyAppVersion "1.0.4"
 #define MyAppPublisher "PromptFlow"
 #define MyAppExeName "PromptFlow.exe"
 #ifndef PublishDir

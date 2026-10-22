@@ -7,5 +7,6 @@ installer/output/
 TestResults/
 .vs/
 AGENTS.md
+.dsh/
 *.user
 *.suo
