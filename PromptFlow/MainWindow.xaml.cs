@@ -1070,8 +1070,28 @@ public partial class MainWindow : Window
             menu.Items.Add(paste);
             menu.Items.Add(plain);
             menu.Items.Add(new Separator());
-            if (!item.HasImage) { var edit = new MenuItem { Header = "编辑词条内容" }; edit.Click += (_, _) => EditItem(item); menu.Items.Add(edit); }
-            var display = new MenuItem { Header = "编辑展示文字" }; display.Click += (_, _) => { var text=Prompt("展示文字", item.DisplayText, this, false); if(text is not null){_repository.UpdateDisplayText(item.Id,text);RefreshItems();} }; var delete = new MenuItem { Header = "删除词条" }; delete.Click += (_, _) => { _repository.DeleteItem(item.Id); RefreshItems(); }; menu.Items.Add(display); menu.Items.Add(new Separator()); menu.Items.Add(delete); OpenContextMenu(menu); e.Handled=true;
+            // 展示标题在上、具体内容在下，名称分别点明"标题"和"内容"，避免两者混淆。
+            var display = new MenuItem { Header = "编辑展示标题" };
+            display.Click += (_, _) =>
+            {
+                var text = Prompt("编辑展示标题", item.DisplayText, this, false);
+                if (text is null) return;
+                _repository.UpdateDisplayText(item.Id, text);
+                RefreshItems();
+            };
+            menu.Items.Add(display);
+            if (!item.HasImage)
+            {
+                var edit = new MenuItem { Header = "编辑词条具体内容" };
+                edit.Click += (_, _) => EditItem(item);
+                menu.Items.Add(edit);
+            }
+            var delete = new MenuItem { Header = "删除词条" };
+            delete.Click += (_, _) => { _repository.DeleteItem(item.Id); RefreshItems(); };
+            menu.Items.Add(new Separator());
+            menu.Items.Add(delete);
+            OpenContextMenu(menu);
+            e.Handled = true;
         }
         else if (e.OriginalSource is DependencyObject folderSource && FindParent<ListBoxItem>(folderSource) is ListBoxItem folderRow && folderRow.DataContext is Folder folder)
         { var menu = new ContextMenu(); var lockItem=new MenuItem{Header=folder.IsLocked?"解锁收藏夹":"锁定收藏夹"}; lockItem.Click+=(_,_)=>{_repository.SetFolderLock(folder.Id,!folder.IsLocked);RefreshItems();}; var delete = new MenuItem { Header = "删除收藏夹" }; delete.Click += (_, _) => { _repository.DeleteFolder(folder.Id); if (_selectedFolder == folder.Id) _selectedFolder = 0; RefreshItems(); }; menu.Items.Add(lockItem); menu.Items.Add(new Separator()); menu.Items.Add(delete); OpenContextMenu(menu); e.Handled=true; }
@@ -1106,7 +1126,7 @@ public partial class MainWindow : Window
             var repository = _repository;
             var full = await Task.Run(() => repository.GetItem(item.Id));
             if (full is null || !ReferenceEquals(repository, _repository)) return;
-            var text = Prompt("编辑词条内容", full.TextContent ?? full.DisplayText, this, true);
+            var text = Prompt("编辑词条具体内容", full.TextContent ?? full.DisplayText, this, true);
             if (text is null) return;
             full.TextContent = text;
             full.DisplayText = text.ReplaceLineEndings(" ").Trim();

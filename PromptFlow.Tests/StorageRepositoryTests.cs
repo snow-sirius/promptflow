@@ -232,6 +232,41 @@ public sealed class StorageRepositoryTests
         });
     }
 
+    [Fact]
+    public void PageQueriesReportTextLengthWithoutLineBreaks()
+    {
+        WithRepository((repo, _) =>
+        {
+            var text = repo.UpsertClipboard(new ClipboardItem
+            {
+                TextContent = "第一行\r\n第二行\n", DisplayText = "第一行 第二行",
+                CreatedAt = DateTime.UtcNow, LastCopiedAt = DateTime.UtcNow
+            }, 10);
+            var image = repo.UpsertClipboard(new ClipboardItem
+            {
+                DisplayText = "图片", ImagePng = [1, 2, 3],
+                CreatedAt = DateTime.UtcNow, LastCopiedAt = DateTime.UtcNow
+            }, 10);
+            var folder = repo.CreateFolder("counted");
+            repo.AddToFolder(text.Id, folder);
+            repo.AddToFolder(image.Id, folder);
+
+            var history = Assert.Single(repo.GetHistoryPage(10).Items, i => i.Id == text.Id);
+            Assert.Equal(6, history.TextLength);
+            Assert.True(history.HasTextCount);
+            Assert.Equal("6 字", history.TextLengthText);
+
+            // 收藏夹分页走另一条 SELECT，字数同样来自数据库统计而不是展示文字。
+            var fromFolder = Assert.Single(repo.GetFolderPage(folder, 10).Items, i => i.Id == text.Id);
+            Assert.Equal(6, fromFolder.TextLength);
+
+            var imageItem = Assert.Single(repo.GetHistoryPage(10).Items, i => i.Id == image.Id);
+            Assert.Equal(0, imageItem.TextLength);
+            Assert.False(imageItem.HasTextCount);
+            Assert.Empty(imageItem.TextLengthText);
+        });
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(-1)]

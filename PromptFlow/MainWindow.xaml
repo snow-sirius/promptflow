@@ -20,7 +20,14 @@
                      </Border>
                     <StackPanel Grid.Column="1">
                         <TextBlock Text="{Binding Preview}" FontSize="13" Foreground="{StaticResource InkBrush}" TextTrimming="CharacterEllipsis" MaxHeight="34"/>
-                        <TextBlock Text="{Binding LocalLastCopiedAt, StringFormat={}{0:MM-dd HH:mm}}" FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="0,5,0,0"/>
+                        <!-- 时间后紧跟字数：只在纯文字词条出现，「·」和数字一起隐藏，不留空档。 -->
+                        <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
+                            <TextBlock Text="{Binding LocalLastCopiedAt, StringFormat={}{0:MM-dd HH:mm}}" FontSize="11" Foreground="{StaticResource MutedBrush}"/>
+                            <TextBlock Text="·" FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="5,0"
+                                       Visibility="{Binding HasTextCount, Converter={StaticResource BoolToVisibilityConverter}}"/>
+                            <TextBlock Text="{Binding TextLengthText}" FontSize="11" Foreground="{StaticResource MutedBrush}"
+                                       Visibility="{Binding HasTextCount, Converter={StaticResource BoolToVisibilityConverter}}"/>
+                        </StackPanel>
                     </StackPanel>
                     <Button Grid.Column="2" Tag="{Binding}" Content="{Binding IsFavorite, Converter={StaticResource BoolToStarConverter}}" Click="Favorite_Click" Width="30" Height="28" Padding="0" ToolTip="收藏到收藏夹" Foreground="{StaticResource AccentBrush}" FontSize="16"/>
                 </Grid>

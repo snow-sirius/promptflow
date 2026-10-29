@@ -114,8 +114,9 @@ public sealed class StorageRepository : IDisposable
         lock (_gate)
         {
             using var cmd = _connection.CreateCommand();
-            cmd.CommandText = @"SELECT id, display_text, created_at, last_copied_at,
-                                       is_favorite, image_png_blob IS NOT NULL AS has_image
+            cmd.CommandText = $@"SELECT id, display_text, created_at, last_copied_at,
+                                       is_favorite, image_png_blob IS NOT NULL AS has_image,
+                                       {TextLengthSql("text_content")} AS text_length
                                 FROM clipboard_items
                                 WHERE ($beforeTime IS NULL OR last_copied_at < $beforeTime
                                       OR (last_copied_at = $beforeTime AND id < $beforeId))
@@ -139,9 +140,9 @@ public sealed class StorageRepository : IDisposable
         lock (_gate)
         {
             using var cmd = _connection.CreateCommand();
-            cmd.CommandText = @"SELECT ci.id, ci.display_text, ci.created_at,
+            cmd.CommandText = $@"SELECT ci.id, ci.display_text, ci.created_at,
                                        ci.last_copied_at, ci.is_favorite, ci.image_png_blob IS NOT NULL AS has_image,
-                                       fi.sort_order
+                                       fi.sort_order, {TextLengthSql("ci.text_content")} AS text_length
                                 FROM clipboard_items ci
                                 JOIN folder_items fi ON fi.item_id=ci.id
                                 WHERE fi.folder_id=$folder
@@ -420,6 +421,10 @@ public sealed class StorageRepository : IDisposable
             using var cmd = _connection.CreateCommand(); cmd.CommandText = "DELETE FROM clipboard_items WHERE is_favorite=0 AND id NOT IN (SELECT id FROM clipboard_items WHERE is_favorite=0 ORDER BY last_copied_at DESC LIMIT $max)"; cmd.Parameters.AddWithValue("$max", Math.Max(1, max)); cmd.ExecuteNonQuery();
         }
     }
+    /// <summary>列表里的字数：SQLite 的 LENGTH 对 TEXT 按字符计数，换行不算字，因此先剔除 CR/LF。</summary>
+    private static string TextLengthSql(string textColumn) =>
+        $"LENGTH(REPLACE(REPLACE(COALESCE({textColumn},''), char(13), ''), char(10), ''))";
+
     private static List<ClipboardItem> ReadSummaryItems(SqliteCommand cmd)
     {
         using var reader = cmd.ExecuteReader();
@@ -431,7 +436,8 @@ public sealed class StorageRepository : IDisposable
             CreatedAt = DateTime.Parse(reader.GetString(2), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
             LastCopiedAt = DateTime.Parse(reader.GetString(3), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
             IsFavorite = reader.GetInt32(4) != 0,
-            HasImage = reader.GetInt32(5) != 0
+            HasImage = reader.GetInt32(5) != 0,
+            TextLength = reader.GetInt32(6)
         });
         return list;
     }
@@ -454,7 +460,8 @@ public sealed class StorageRepository : IDisposable
             LastCopiedAt = DateTime.Parse(reader.GetString(3), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
             IsFavorite = reader.GetInt32(4) != 0,
             HasImage = reader.GetInt32(5) != 0,
-            SortOrder = reader.GetInt32(6)
+            SortOrder = reader.GetInt32(6),
+            TextLength = reader.GetInt32(7)
         });
         return list;
     }
